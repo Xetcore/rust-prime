@@ -1,4 +1,4 @@
-#![feature(portable_simd)]
+// #![feature(portable_simd)]
 // src/lib.rs
 pub mod tokenizer_core;
 pub mod tensor_engine;

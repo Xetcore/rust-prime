@@ -303,8 +303,6 @@ mod tests {
         let model = create_dummy_model_for_generation(vocab_size, block_size, n_embd);
         let input_ids: Vec<u32> = vec![];
         let result = generate(&model, input_ids, 5, 0, None);
-        feature/tensor-performance-upgrade
-=======
         assert!(matches!(result, Err(TextGeneratorError::InvalidInput(_))));
     }
 
