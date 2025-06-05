@@ -1,7 +1,63 @@
-use half::{f16, bf16};
-use num_traits::{Float, Zero}; // Added Zero
+use half::{bf16, f16};
+use num_traits::{FloatCore, NumAssign, Zero}; // Combined num_traits uses
 use std::arch::x86_64::*;
-use std::ops::{Add, Mul, Div, Sub}; // For potential generic operations
+use std::fmt::Debug; // For FloatType trait bound
+use std::ops::{Add, Div, Mul, Sub}; // For potential generic operations
+
+// --- FloatType Trait Definition ---
+pub trait FloatType:
+    Copy + Clone + Debug + Send + Sync + PartialEq + PartialOrd + 'static +
+    FloatCore + NumAssign + Zero
+{
+    const ZERO: Self;
+    const ONE: Self;
+
+    fn from_f32(val: f32) -> Self;
+    fn to_f32(&self) -> f32;
+}
+
+// --- FloatType Implementations ---
+impl FloatType for f32 {
+    const ZERO: Self = 0.0f32;
+    const ONE: Self = 1.0f32;
+
+    #[inline(always)]
+    fn from_f32(val: f32) -> Self {
+        val
+    }
+    #[inline(always)]
+    fn to_f32(&self) -> f32 {
+        *self
+    }
+}
+
+impl FloatType for f16 {
+    const ZERO: Self = f16::ZERO;
+    const ONE: Self = f16::ONE;
+
+    #[inline(always)]
+    fn from_f32(val: f32) -> Self {
+        f16::from_f32(val)
+    }
+    #[inline(always)]
+    fn to_f32(&self) -> f32 {
+        self.to_f32()
+    }
+}
+
+impl FloatType for bf16 {
+    const ZERO: Self = bf16::ZERO;
+    const ONE: Self = bf16::ONE;
+
+    #[inline(always)]
+    fn from_f32(val: f32) -> Self {
+        bf16::from_f32(val)
+    }
+    #[inline(always)]
+    fn to_f32(&self) -> f32 {
+        self.to_f32()
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TensorError {
@@ -17,16 +73,15 @@ pub enum TensorError {
 pub struct Tensor<T> {
     pub data: Vec<T>,
     pub shape: Vec<usize>,
-    // Stride might be added later for more advanced operations
 }
 
 // --- Generic Tensor Operations ---
 impl<T: Clone> Tensor<T> {
     pub fn new(data: Vec<T>, shape: Vec<usize>) -> Result<Tensor<T>, TensorError> {
         if data.len() != shape.iter().product() {
-            if shape.is_empty() && data.len() == 1 { // Allow scalar
+            if shape.is_empty() && data.len() == 1 {
                 // ok
-            } else if shape.len() == 1 && shape[0] == 0 && data.is_empty() { // Allow empty tensor
+            } else if shape.len() == 1 && shape[0] == 0 && data.is_empty() {
                 // ok
             }
             else {
@@ -45,17 +100,17 @@ impl<T: Clone> Tensor<T> {
     }
 
     pub fn num_elements(&self) -> usize {
-        if self.shape.is_empty() { // scalar
+        if self.shape.is_empty() {
             return 1;
         }
-        if self.shape.len() == 1 && self.shape[0] == 0 { // empty
+        if self.shape.len() == 1 && self.shape[0] == 0 {
             return 0;
         }
         self.shape.iter().product()
     }
 
     fn _flat_index(&self, indices: &[usize]) -> Result<usize, TensorError> {
-        if self.shape.is_empty() { // Scalar tensor
+        if self.shape.is_empty() {
             if indices.is_empty() || (indices.len() == 1 && indices[0] == 0) {
                 return Ok(0);
             } else {
@@ -111,7 +166,7 @@ impl<T: Clone> Tensor<T> {
             ));
         }
         Ok(Tensor {
-            data: self.data.clone(), // Data is cloned
+            data: self.data.clone(),
             shape: new_shape,
         })
     }
@@ -137,25 +192,41 @@ impl<T: Clone> Tensor<T> {
     }
 }
 
-impl<T: Clone + Zero> Tensor<T> {
-    pub fn zeros(shape: Vec<usize>) -> Tensor<T> {
-        let num_elements = shape.iter().product();
-        let data = vec![T::zero(); num_elements];
-        Tensor { data, shape }
+// --- Generic Tensor Operations using FloatType ---
+impl<F: FloatType> Tensor<F> {
+    /// Creates a new tensor with the given shape, filled with F::ZERO.
+    /// F must implement the FloatType trait.
+    pub fn zeros(shape: Vec<usize>) -> Result<Self, TensorError> {
+        let num_elements: usize = if shape.is_empty() {
+            1
+        } else {
+            shape.iter().product()
+        };
+
+        let data = vec![F::ZERO; num_elements];
+        Tensor::new(data, shape)
+    }
+
+    /// Converts the tensor from its current FloatType F to a new FloatType T_OUT.
+    /// Conversion is performed element-wise via an f32 intermediate representation: F -> f32 -> T_OUT.
+    pub fn convert<T_OUT: FloatType>(&self) -> Result<Tensor<T_OUT>, TensorError> {
+        let mut new_data = Vec::with_capacity(self.data.len());
+        for val_f_in in &self.data {
+            let val_f32 = val_f_in.to_f32();
+            let val_t_out = T_OUT::from_f32(val_f32);
+            new_data.push(val_t_out);
+        }
+        Tensor::new(new_data, self.shape.clone())
     }
 }
 
 
 // --- f32 Specific Operations (including SIMD) ---
-// Constants for AVX2 operations (8 f32s)
 const AVX2_F32_COUNT: usize = 8;
-// MatMul block sizes (example values, can be tuned)
 const MATMUL_BLOCK_M: usize = 64;
 const MATMUL_BLOCK_K: usize = 32;
 const MATMUL_BLOCK_N: usize = 256;
 
-
-// Helper for tanh approximation with AVX2
 #[target_feature(enable = "avx2")]
 unsafe fn tanhf_approx_avx2(v: __m256) -> __m256 {
     let v_sq = _mm256_mul_ps(v, v);
@@ -165,7 +236,6 @@ unsafe fn tanhf_approx_avx2(v: __m256) -> __m256 {
     _mm256_max_ps(_mm256_set1_ps(-1.0), _mm256_min_ps(tanh_v, _mm256_set1_ps(1.0)))
 }
 
-// Helper for horizontal sum of an __m256 vector
 #[target_feature(enable = "avx2", enable = "fma")]
 unsafe fn horizontal_sum_m256(vec: __m256) -> f32 {
     let hsum = _mm256_hadd_ps(vec, vec);
@@ -175,7 +245,6 @@ unsafe fn horizontal_sum_m256(vec: __m256) -> f32 {
     _mm_cvtss_f32(_mm256_castps256_ps128(sum))
 }
 
-// Helper for horizontal max of an __m256 vector
 #[target_feature(enable = "avx2")]
 unsafe fn horizontal_max_m256(vec: __m256) -> f32 {
     let perm1 = _mm256_permute_ps(vec, 0b_01_00_11_10);
@@ -185,7 +254,7 @@ unsafe fn horizontal_max_m256(vec: __m256) -> f32 {
     let low_128 = _mm256_castps256_ps128(max2);
     let high_128 = _mm256_extractf128_ps(max2, 1);
     let max_128 = _mm_max_ps(low_128, high_128);
-    let vhigh = _mm256_extractf128_ps(vec, 1); // This part had a slight logic error, simplified
+    let vhigh = _mm256_extractf128_ps(vec, 1);
     let vlow = _mm256_castps256_ps128(vec);
     let max_val_128_lanes = _mm_max_ps(vhigh, vlow);
     let temp1 = _mm_shuffle_ps(max_val_128_lanes, max_val_128_lanes, _MM_SHUFFLE(0,0,3,2));
@@ -227,18 +296,13 @@ unsafe fn pack_a_block(
 }
 
 #[target_feature(enable = "avx2", enable = "fma")]
-unsafe fn pack_b_transposed_block( // This packs a block of B_transposed (N_orig x K_orig) into (K_block x N_block) column major for microkernel
+unsafe fn pack_b_transposed_block(
     _b_transposed_data: &[f32], b_transposed_ptr: *const f32, k_block_start: usize, n_block_start: usize,
     block_k: usize, block_n: usize, k_dim_original_b: usize, packed_b: &mut [f32]
 ) {
     let mut packed_idx = 0;
-    // b_transposed_data is (N_orig x K_orig)
-    // We want to pack a sub-block of it: (rows from k_block_start to k_block_start + block_k)
-    //                                    (cols from n_block_start to n_block_start + block_n)
-    // into packed_b with dimensions (block_k x block_n) but in column-major order for B.
-    for n_idx_in_block in 0..block_n { // Iterate columns of the block of B we want to form
-        for k_idx_in_block in 0..block_k { // Iterate rows of the block of B we want to form
-            // Accessing B_transposed at row (n_block_start + n_idx_in_block), col (k_block_start + k_idx_in_block)
+    for n_idx_in_block in 0..block_n {
+        for k_idx_in_block in 0..block_k {
             packed_b[packed_idx] = *b_transposed_ptr.add(
                 (n_block_start + n_idx_in_block) * k_dim_original_b + (k_block_start + k_idx_in_block)
             );
@@ -248,24 +312,21 @@ unsafe fn pack_b_transposed_block( // This packs a block of B_transposed (N_orig
 }
 
 #[target_feature(enable = "avx2", enable = "fma")]
-unsafe fn matmul_micro_kernel_avx2( // Simplified: processes 8 rows of A, 8 cols of B at a time
-    packed_a_ptr: *const f32, // Block of A (M_block x K_block), row-major
-    packed_b_ptr: *const f32, // Block of B (K_block x N_block), col-major (transposed from original B's block)
-    c_ptr: *mut f32,          // Output C matrix (M x N)
-    m_start_in_c: usize, n_start_in_c: usize, // Top-left corner of the C sub-block
-    block_k: usize, n_dim_c: usize, // K of the block, N of the overall C matrix
-    micro_m: usize, micro_n: usize // Actual dimensions of this micro-kernel pass (e.g. 8x8)
+unsafe fn matmul_micro_kernel_avx2(
+    packed_a_ptr: *const f32,
+    packed_b_ptr: *const f32,
+    c_ptr: *mut f32,
+    m_start_in_c: usize, n_start_in_c: usize,
+    block_k: usize, n_dim_c: usize,
+    micro_m: usize, micro_n: usize
 ) {
-    let mut c_accum = [_mm256_setzero_ps(); 8]; // Max 8 rows of A processed by AVX2 vector at once
+    let mut c_accum = [_mm256_setzero_ps(); 8];
 
     for k_loop in 0..block_k {
-        // Load 8 values from packed_b (column k_loop, for micro_n columns)
-        // packed_b is (K_block x N_block) column-major.
-        // So, k_loop'th row of original B block, now k_loop'th "column group" in packed_b.
-        let b_vals = _mm256_loadu_ps(packed_b_ptr.add(k_loop * micro_n)); // Assumes micro_n is 8
+        let b_vals = _mm256_loadu_ps(packed_b_ptr.add(k_loop * micro_n));
 
-        for m_idx in 0..micro_m { // For each of the M rows of A we are processing
-            let a_val = *packed_a_ptr.add(m_idx * block_k + k_loop); // A is row-major
+        for m_idx in 0..micro_m {
+            let a_val = *packed_a_ptr.add(m_idx * block_k + k_loop);
             let a_vec = _mm256_set1_ps(a_val);
             c_accum[m_idx] = _mm256_fmadd_ps(a_vec, b_vals, c_accum[m_idx]);
         }
@@ -401,7 +462,6 @@ impl Tensor<f32> {
         let b_transposed_ptr = b_transposed_data.as_ptr();
         let c_ptr = c_data.as_mut_ptr();
 
-        // Initialize C data to zero
         for val in c_data.iter_mut() { *val = 0.0; }
 
 
@@ -417,33 +477,30 @@ impl Tensor<f32> {
 
                     pack_b_transposed_block(b_transposed_data, b_transposed_ptr, k_block_start, n_block_start, current_block_k, current_block_n_b, k_dim, &mut packed_b_block);
 
-                    // Micro-kernel application
-                    let micro_m_unit = 8; // Process 8 rows of A with AVX
-                    let micro_n_unit = 8; // Process 8 columns of B with AVX
+                    let micro_m_unit = 8;
+                    let micro_n_unit = 8;
 
                     for m_micro_offset in (0..current_block_m_a).step_by(micro_m_unit) {
                         let actual_micro_m = (current_block_m_a - m_micro_offset).min(micro_m_unit);
                         for n_micro_offset in (0..current_block_n_b).step_by(micro_n_unit) {
                             let actual_micro_n = (current_block_n_b - n_micro_offset).min(micro_n_unit);
 
-                            if actual_micro_m == micro_m_unit && actual_micro_n == micro_n_unit { // Full 8x8 micro-kernel
+                            if actual_micro_m == micro_m_unit && actual_micro_n == micro_n_unit {
                                 matmul_micro_kernel_avx2(
                                     packed_a_block.as_ptr().add(m_micro_offset * current_block_k),
-                                    packed_b_block.as_ptr().add(n_micro_offset * current_block_k), // packed_b is K_block x N_block (col-major like)
+                                    packed_b_block.as_ptr().add(n_micro_offset * current_block_k),
                                     c_ptr,
                                     m_block_start + m_micro_offset,
                                     n_block_start + n_micro_offset,
                                     current_block_k, n_dim,
                                     actual_micro_m, actual_micro_n
                                 );
-                            } else { // Scalar fallback for partial micro-blocks (peeling)
+                            } else {
                                 for m_i in 0..actual_micro_m {
                                     for n_j in 0..actual_micro_n {
                                         let mut acc = 0.0f32;
                                         for k_i in 0..current_block_k {
-                                            // A is M_block x K_block (row-major)
                                             let a_val = packed_a_block[(m_micro_offset + m_i) * current_block_k + k_i];
-                                            // B is K_block x N_block (col-major like for kernel)
                                             let b_val = packed_b_block[k_i * current_block_n_b + (n_micro_offset + n_j)];
                                             acc += a_val * b_val;
                                         }
@@ -513,7 +570,7 @@ impl Tensor<f32> {
             let mut temp_exp = [0.0f32; AVX2_F32_COUNT];
             let mut temp_x = [0.0f32; AVX2_F32_COUNT];
             _mm256_storeu_ps(temp_x.as_mut_ptr(), x);
-            for k_exp in 0..AVX2_F32_COUNT { temp_exp[k_exp] = libm::expf(temp_x[k_exp]); } // Fallback to scalar exp for now
+            for k_exp in 0..AVX2_F32_COUNT { temp_exp[k_exp] = libm::expf(temp_x[k_exp]); }
             let exp_vec = _mm256_loadu_ps(temp_exp.as_ptr());
             sum_exp_vec = _mm256_add_ps(sum_exp_vec, exp_vec);
             _mm256_storeu_ps(slice_data.as_mut_ptr().add(i), exp_vec);
@@ -525,7 +582,7 @@ impl Tensor<f32> {
             slice_data[j] = exp_val;
             sum_exp += exp_val;
         }
-        let sum_exp_inv = if sum_exp == 0.0 { 0.0 } else { 1.0 / sum_exp }; // Avoid division by zero
+        let sum_exp_inv = if sum_exp == 0.0 { 0.0 } else { 1.0 / sum_exp };
         let sum_exp_inv_vec = _mm256_set1_ps(sum_exp_inv);
         i = 0;
         while i + AVX2_F32_COUNT <= n {
@@ -538,7 +595,7 @@ impl Tensor<f32> {
     }
 
     pub fn softmax(&mut self, axis: Option<usize>) -> Result<(), TensorError> {
-        let default_axis = self.rank().saturating_sub(1); // Ensure axis is not negative for rank 0
+        let default_axis = self.rank().saturating_sub(1);
         let axis_to_apply = axis.unwrap_or(default_axis);
 
         if self.rank() > 0 && axis_to_apply >= self.rank() {
@@ -551,7 +608,7 @@ impl Tensor<f32> {
         }
 
         let last_dim_size = self.shape[axis_to_apply];
-        if last_dim_size == 0 { return Ok(()); } // Softmax on empty dimension is a no-op
+        if last_dim_size == 0 { return Ok(()); }
         let num_slices = self.data.len() / last_dim_size;
 
         let use_avx2 = is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma");
@@ -632,7 +689,7 @@ impl Tensor<f32> {
 // Helper function for concat indexing
 fn construct_index(
     outer_loop_idx: usize, axis_loop_idx: usize, inner_loop_idx: usize,
-    axis: usize, original_shape: &[usize], _inner_dims_prod: usize, // _inner_dims_prod currently unused
+    axis: usize, original_shape: &[usize], _inner_dims_prod: usize,
 ) -> Vec<usize> {
     let rank = original_shape.len();
     let mut current_multi_dim_idx = vec![0; rank];
@@ -643,16 +700,16 @@ fn construct_index(
     }
     current_multi_dim_idx[axis] = axis_loop_idx;
     let mut temp_inner = inner_loop_idx;
-    for d in ((axis + 1)..rank).rev() { // Corrected loop range
-        if original_shape[d] == 0 { // Avoid division by zero for empty dimensions
+    for d in ((axis + 1)..rank).rev() {
+        if original_shape[d] == 0 {
             current_multi_dim_idx[d] = 0;
         } else {
             current_multi_dim_idx[d] = temp_inner % original_shape[d];
             temp_inner /= original_shape[d];
         }
     }
-    if rank > axis + 1 && original_shape[axis + 1] != 0 { // Handle the first inner dimension correctly
-         current_multi_dim_idx[axis+1] = temp_inner % original_shape[axis+1]; // Remainder for the first inner dim
+    if rank > axis + 1 && original_shape[axis + 1] != 0 {
+         current_multi_dim_idx[axis+1] = temp_inner % original_shape[axis+1];
     } else if rank > axis + 1 && original_shape[axis+1] == 0 {
          current_multi_dim_idx[axis+1] = 0;
     }
@@ -663,11 +720,7 @@ fn construct_index(
 
 // --- f16 Specific Operations ---
 impl Tensor<f16> {
-    pub fn zeros(shape: Vec<usize>) -> Tensor<f16> {
-        let num_elements = shape.iter().product();
-        let data = vec![f16::from_f32(0.0); num_elements];
-        Tensor { data, shape }
-    }
+    // zeros removed, should use impl<F: FloatType> Tensor<F>::zeros
 
     pub fn scalar_mul(&mut self, scalar: f16) -> Result<(), TensorError> {
         for val in self.data.iter_mut() { *val = *val * scalar; }
@@ -754,14 +807,14 @@ impl Tensor<f16> {
         let f32_self = self.to_f32_tensor()?;
         let f32_other = other.to_f32_tensor()?;
 
-        let f32_result = f32_self.matmul(&f32_other)?; // Calls f32 SIMD version
+        let f32_result = f32_self.matmul(&f32_other)?;
 
         f32_result.to_f16_tensor()
     }
 
     pub fn softmax(&mut self, axis: Option<usize>) -> Result<(), TensorError> {
         let mut f32_tensor = self.to_f32_tensor()?;
-        f32_tensor.softmax(axis)?; // Calls f32 SIMD version
+        f32_tensor.softmax(axis)?;
 
         if self.data.len() != f32_tensor.data.len() {
             return Err(TensorError::GenericError("Data length mismatch during f16 softmax conversion".to_string()));
@@ -775,11 +828,7 @@ impl Tensor<f16> {
 
 // --- bf16 Specific Operations ---
 impl Tensor<bf16> {
-    pub fn zeros(shape: Vec<usize>) -> Tensor<bf16> {
-        let num_elements = shape.iter().product();
-        let data = vec![bf16::from_f32(0.0); num_elements];
-        Tensor { data, shape }
-    }
+    // zeros removed, should use impl<F: FloatType> Tensor<F>::zeros
 
     pub fn scalar_mul(&mut self, scalar: bf16) -> Result<(), TensorError> {
         for val in self.data.iter_mut() { *val = *val * scalar; }
@@ -856,7 +905,7 @@ impl Tensor<bf16> {
         if self.data.len() != f32_self.data.len() {
             return Err(TensorError::GenericError("Data length mismatch during bf16 layernorm conversion".to_string()));
         }
-        for (original_val, f32_val) in self.data.iter_mut().zip(f32_self.data.iter()) {
+        for (original_val, f32_val) in self.data.iter_mut().zip(f32_tensor.data.iter()) {
             *original_val = bf16::from_f32(*f32_val);
         }
         Ok(())
@@ -866,14 +915,14 @@ impl Tensor<bf16> {
         let f32_self = self.to_f32_tensor()?;
         let f32_other = other.to_f32_tensor()?;
 
-        let f32_result = f32_self.matmul(&f32_other)?; // Calls f32 SIMD version
+        let f32_result = f32_self.matmul(&f32_other)?;
 
         f32_result.to_bf16_tensor()
     }
 
     pub fn softmax(&mut self, axis: Option<usize>) -> Result<(), TensorError> {
         let mut f32_tensor = self.to_f32_tensor()?;
-        f32_tensor.softmax(axis)?; // Calls f32 SIMD version
+        f32_tensor.softmax(axis)?;
 
         if self.data.len() != f32_tensor.data.len() {
             return Err(TensorError::GenericError("Data length mismatch during bf16 softmax conversion".to_string()));
@@ -934,7 +983,6 @@ mod tests {
     fn test_matmul_f16() -> Result<(), TensorError> {
         let a_f16 = Tensor::new(vec![f16::from_f32(1.0), f16::from_f32(2.0), f16::from_f32(3.0), f16::from_f32(4.0)], vec![2, 2])?;
         let b_f16 = Tensor::new(vec![f16::from_f32(5.0), f16::from_f32(6.0), f16::from_f32(7.0), f16::from_f32(8.0)], vec![2, 2])?;
-        // Expected f32: [[19.0, 22.0], [43.0, 50.0]]
         let expected_f32_data = vec![19.0, 22.0, 43.0, 50.0];
 
         let c_f16 = a_f16.matmul(&b_f16)?;
@@ -956,7 +1004,7 @@ mod tests {
         assert_eq!(c_bf16.shape, vec![2, 2]);
 
         for (val_bf16, expected_f32) in c_bf16.data.iter().zip(expected_f32_data.iter()) {
-            assert_relative_eq!(val_bf16.to_f32(), *expected_f32, epsilon = 1e-1, max_relative = 1e-1); // bf16 has less precision
+            assert_relative_eq!(val_bf16.to_f32(), *expected_f32, epsilon = 1e-1, max_relative = 1e-1);
         }
         Ok(())
     }
@@ -964,7 +1012,8 @@ mod tests {
     #[test]
     fn test_gelu_f32() -> Result<(), TensorError> {
         let mut tensor = Tensor::new(vec![-3.0, -1.0, 0.0, 1.0, 3.0], vec![5])?;
-        let expected_values_scalar = tensor.data.iter().map(|x| 0.5 * x * (1.0 + libm::tanhf(std::f32::consts::FRAC_2_SQRT_PI * (x + 0.044715 * x.powi(3))))).collect::<Vec<f32>>();
+        let expected_values_scalar = tensor.data.iter().map(|x| 0.5 * x * (1.0 + libm::tanhf(std::f32::consts::FRAC_2_SQRT_PI * (x + 0.044715 * x.powi(3)))))
+            .collect::<Vec<f32>>();
         tensor.gelu()?;
         assert_f32_vec_eq(&tensor.data, &expected_values_scalar, 1e-4);
         Ok(())
@@ -1079,19 +1128,21 @@ mod tests {
     }
 
     #[test]
-    fn test_zeros_f16() {
-        let tensor_f16 = Tensor::<f16>::zeros(vec![2,2]);
+    fn test_zeros_f16() -> Result<(), TensorError> { // Changed to return Result
+        let tensor_f16 = Tensor::<f16>::zeros(vec![2,2])?; // Added ?
         assert_eq!(tensor_f16.shape, vec![2,2]);
         assert_eq!(tensor_f16.data.len(), 4);
         for val in tensor_f16.data { assert_eq!(val, f16::from_f32(0.0)); }
+        Ok(())
     }
 
     #[test]
-    fn test_zeros_bf16() {
-        let tensor_bf16 = Tensor::<bf16>::zeros(vec![2,2]);
+    fn test_zeros_bf16() -> Result<(), TensorError> { // Changed to return Result
+        let tensor_bf16 = Tensor::<bf16>::zeros(vec![2,2])?; // Added ?
         assert_eq!(tensor_bf16.shape, vec![2,2]);
         assert_eq!(tensor_bf16.data.len(), 4);
         for val in tensor_bf16.data { assert_eq!(val, bf16::from_f32(0.0)); }
+        Ok(())
     }
 
     #[test]
@@ -1229,13 +1280,12 @@ mod tests {
             vec![f16::from_f32(1.0), f16::from_f32(2.0), f16::from_f32(3.0), f16::from_f32(1.0), f16::from_f32(1.0), f16::from_f32(1.0)],
             vec![2, 3]
         )?;
-        // Expected f32 data (from test_softmax_f32_last_axis)
         let expected_f32_data = vec![
             0.09003057, 0.24472847, 0.66524096,
             0.33333333, 0.33333333, 0.33333333,
         ];
 
-        tensor_f16.softmax(None)?; // Axis = last axis
+        tensor_f16.softmax(None)?;
 
         for (val_f16, expected_f32) in tensor_f16.data.iter().zip(expected_f32_data.iter()) {
             assert_relative_eq!(val_f16.to_f32(), *expected_f32, epsilon = 1e-2, max_relative = 1e-2);
@@ -1279,7 +1329,7 @@ mod tests {
         let tensor_b = Tensor::new(b_data.clone(), vec![k,n])?;
         let mut c_scalar_data = vec![0.0f32; m * n];
         for i in 0..m {
-            for j_c in 0..n { // Renamed j to j_c to avoid conflict
+            for j_c in 0..n {
                 let mut sum = 0.0;
                 for l_idx in 0..k {
                     sum += tensor_a.data[i * k + l_idx] * tensor_b.data[l_idx * n + j_c];
@@ -1296,3 +1346,7 @@ mod tests {
         Ok(())
     }
 }
+
+[end of tensor_core_optimized/src/lib.rs]
+
+[end of tensor_core_optimized/src/lib.rs]

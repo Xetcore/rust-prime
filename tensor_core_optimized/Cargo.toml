@@ -5,8 +5,8 @@ edition = "2021"
 
 [dependencies]
 libm = "0.2.8"
-half = "2.2.1" # For f16/bf16 support
-num-traits = "0.2" # For numeric trait bounds
+half = { version = "2.2.1", features = ["num-traits", "serde"] }
+num-traits = "0.2.15"
 
 [dev-dependencies]
 rand = "0.8"
