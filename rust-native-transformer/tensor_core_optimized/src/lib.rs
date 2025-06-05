@@ -24,46 +24,6 @@ impl std::fmt::Display for TensorError {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
-unsafe fn pack_b_transposed_block(
-    b_t_data: &[f32],       // Original B^T matrix data (row-major for B^T)
-                            // B^T has logical dimensions [n_dim_orig, k_dim_orig]
-    n_start: usize,         // Starting row in B^T for the current block (corresponds to original B's column index)
-    k_start: usize,         // Starting col in B^T for the current block (corresponds to original B's row index / K dimension)
-    k_dim_orig: usize,      // Total columns in B^T (which is k_dim, the common dimension, and stride for B^T)
-    current_block_n: usize, // Number of rows to pack from B^T for this block (<= MATMUL_BLOCK_N)
-    current_block_k: usize, // Number of columns to pack from B^T for this block (<= MATMUL_BLOCK_K)
-    packed_b_t: &mut [f32]  // Output buffer, assumed to be MATMUL_BLOCK_N * MATMUL_BLOCK_K
-) {
-    // packed_b_t is expected to be pre-allocated to MATMUL_BLOCK_N * MATMUL_BLOCK_K.
-    // This implementation will pack the block of B^T in a row-major fashion within packed_b_t.
-
-    // 1. Zero out the packed_b_t buffer to handle padding.
-    for val_idx in 0..packed_b_t.len() { // Iterate up to the full capacity
-        *packed_b_t.get_unchecked_mut(val_idx) = 0.0f32;
-    }
-
-    // 2. Copy the relevant block from b_t_data to the top-left of packed_b_t.
-    // The packed buffer `packed_b_t` is treated as having MATMUL_BLOCK_N rows
-    // and MATMUL_BLOCK_K columns (its stride is MATMUL_BLOCK_K).
-    for r_idx_block in 0..current_block_n { // Iterate through rows of the sub-block from B^T
-        for k_idx_block in 0..current_block_k { // Iterate through columns of the sub-block from B^T
-
-            // Calculate source index from original b_t_data (which is row-major for B^T)
-            let src_row_orig_bt = n_start + r_idx_block;
-            let src_col_orig_bt = k_start + k_idx_block;
-            // k_dim_orig is the number of columns in B^T (original K dimension)
-            let src_flat_idx = src_row_orig_bt * k_dim_orig + src_col_orig_bt;
-
-            // Calculate destination index in packed_b_t (row-major)
-            // The stride of packed_b_t is MATMUL_BLOCK_K.
-            let dest_flat_idx = r_idx_block * MATMUL_BLOCK_K + k_idx_block;
-
-            *packed_b_t.get_unchecked_mut(dest_flat_idx) = *b_t_data.get_unchecked(src_flat_idx);
-        }
-    }
-}
-
 impl std::error::Error for TensorError {}
 
 // Tensor Struct Definition
@@ -213,62 +173,94 @@ impl<T: Default + Clone> Tensor<T> {
 use std::arch::x86_64::*;
 
 // Define block sizes for cache-aware matmul
-// These values are initial estimates and would typically require tuning
-// for optimal performance on specific target architectures.
-
-// MATMUL_BLOCK_M: Block size for the M dimension (rows of A, rows of C).
-// Chosen to be a multiple of a potential register unroll factor for M.
-const MATMUL_BLOCK_M: usize = 32; // Example value
-
-// MATMUL_BLOCK_K: Block size for the K dimension (common dimension).
-// This block is iterated through completely for each C_block.
-const MATMUL_BLOCK_K: usize = 64; // Example value
-
-// MATMUL_BLOCK_N: Block size for the N dimension (cols of B / C).
-// Should ideally be a multiple of SIMD vector width (8 for f32 AVX2)
-// times any unrolling factor for N in the micro-kernel (e.g., 3 * 8 = 24).
-const MATMUL_BLOCK_N: usize = 24; // Example value
+const MATMUL_BLOCK_M: usize = 32;
+const MATMUL_BLOCK_K: usize = 64;
+const MATMUL_BLOCK_N: usize = 24;
 
 #[cfg(target_arch = "x86_64")]
 unsafe fn pack_a_block(
-    a_data: &[f32],         // Original A matrix data (row-major)
-    m_start: usize,         // Starting row in original A for the current block
-    k_start: usize,         // Starting col in original A for the current block
-    k_dim_orig: usize,      // Total columns in original A (stride for A)
-    current_block_m: usize, // Number of rows to pack for this block (<= MATMUL_BLOCK_M)
-    current_block_k: usize, // Number of columns to pack for this block (<= MATMUL_BLOCK_K)
-    packed_a: &mut [f32]    // Output buffer, assumed to be MATMUL_BLOCK_M * MATMUL_BLOCK_K
+    a_data: &[f32],
+    m_start: usize,
+    k_start: usize,
+    k_dim_orig: usize,
+    current_block_m: usize,
+    current_block_k: usize,
+    packed_a: &mut [f32]
 ) {
-    // packed_a is expected to be pre-allocated to MATMUL_BLOCK_M * MATMUL_BLOCK_K.
-    // This implementation will pack matrix A's block in a row-major fashion within packed_a.
-
-    // 1. Zero out the packed_a buffer. This handles padding for edge blocks
-    //    where current_block_m < MATMUL_BLOCK_M or current_block_k < MATMUL_BLOCK_K.
-    for val_idx in 0..packed_a.len() { // Iterate up to the full capacity of packed_a
+    for val_idx in 0..packed_a.len() {
         *packed_a.get_unchecked_mut(val_idx) = 0.0f32;
     }
-
-    // 2. Copy the relevant block from a_data to the top-left of packed_a.
-    // The packed buffer `packed_a` is treated as having dimensions MATMUL_BLOCK_M rows
-    // and MATMUL_BLOCK_K columns for the purpose of indexing (its stride is MATMUL_BLOCK_K).
-    for r_idx_block in 0..current_block_m { // Iterate through rows of the sub-block to be copied
-        for k_idx_block in 0..current_block_k { // Iterate through columns of the sub-block
-
-            // Calculate source index from original a_data (which is row-major)
+    for r_idx_block in 0..current_block_m {
+        for k_idx_block in 0..current_block_k {
             let src_row_orig = m_start + r_idx_block;
             let src_col_orig = k_start + k_idx_block;
             let src_flat_idx = src_row_orig * k_dim_orig + src_col_orig;
-
-            // Calculate destination index in packed_a (also row-major for this packing strategy)
-            // The stride of packed_a is MATMUL_BLOCK_K.
             let dest_flat_idx = r_idx_block * MATMUL_BLOCK_K + k_idx_block;
-
             *packed_a.get_unchecked_mut(dest_flat_idx) = *a_data.get_unchecked(src_flat_idx);
         }
     }
 }
 
-// SIMD Helper functions (Continued)
+#[cfg(target_arch = "x86_64")]
+unsafe fn pack_b_transposed_block(
+    b_t_data: &[f32],
+    n_start: usize,
+    k_start: usize,
+    k_dim_orig: usize,
+    current_block_n: usize,
+    current_block_k: usize,
+    packed_b_t: &mut [f32]
+) {
+    for val_idx in 0..packed_b_t.len() {
+        *packed_b_t.get_unchecked_mut(val_idx) = 0.0f32;
+    }
+    for r_idx_block in 0..current_block_n {
+        for k_idx_block in 0..current_block_k {
+            let src_row_orig_bt = n_start + r_idx_block;
+            let src_col_orig_bt = k_start + k_idx_block;
+            let src_flat_idx = src_row_orig_bt * k_dim_orig + src_col_orig_bt;
+            let dest_flat_idx = r_idx_block * MATMUL_BLOCK_K + k_idx_block;
+            *packed_b_t.get_unchecked_mut(dest_flat_idx) = *b_t_data.get_unchecked(src_flat_idx);
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn matmul_micro_kernel_avx2(
+    packed_a: &[f32],
+    packed_b_t: &[f32],
+    c_data: &mut [f32],
+    current_block_m: usize,
+    current_block_n: usize,
+    current_block_k: usize,
+    row_offset_c: usize,
+    col_offset_c: usize,
+    n_dim_orig_c: usize
+) {
+    for m_idx in 0..current_block_m {
+        for n_idx in 0..current_block_n {
+            let a_row_start_ptr = packed_a.as_ptr().add(m_idx * MATMUL_BLOCK_K);
+            let b_t_row_start_ptr = packed_b_t.as_ptr().add(n_idx * MATMUL_BLOCK_K);
+            let mut sum_vec = _mm256_setzero_ps();
+            let mut k_sidx = 0;
+            while k_sidx + 7 < current_block_k {
+                let a_vec = _mm256_loadu_ps(a_row_start_ptr.add(k_sidx));
+                let b_t_vec = _mm256_loadu_ps(b_t_row_start_ptr.add(k_sidx));
+                sum_vec = _mm256_fmadd_ps(a_vec, b_t_vec, sum_vec);
+                k_sidx += 8;
+            }
+            let mut dot_product_result = horizontal_sum_m256(sum_vec);
+            while k_sidx < current_block_k {
+                dot_product_result += (*a_row_start_ptr.add(k_sidx)) * (*b_t_row_start_ptr.add(k_sidx));
+                k_sidx += 1;
+            }
+            let c_flat_idx = (row_offset_c + m_idx) * n_dim_orig_c + (col_offset_c + n_idx);
+            *c_data.get_unchecked_mut(c_flat_idx) += dot_product_result;
+        }
+    }
+}
+
+// SIMD Helper functions (Continued from above, or this is where they start if not above)
 #[cfg(target_arch = "x86_64")]
 #[inline]
 unsafe fn tanhf_approx_avx2(x: __m256) -> __m256 {
@@ -1155,6 +1147,8 @@ mod tests {
         }
     }
 }
+
+[end of rust-native-transformer/tensor_core_optimized/src/lib.rs]
 
 [end of rust-native-transformer/tensor_core_optimized/src/lib.rs]
 
