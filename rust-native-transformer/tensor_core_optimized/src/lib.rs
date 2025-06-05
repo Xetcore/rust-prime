@@ -1,4 +1,6 @@
 use std::fmt::Debug;
+use num_traits::{FloatCore, NumAssign};
+use half::{f16, bf16};
 
 // TensorError Enum Definition
 #[derive(Debug, PartialEq)]
@@ -24,7 +26,211 @@ impl std::fmt::Display for TensorError {
     }
 }
 
+// Helper function for f32 matrix multiplication
+fn matmul_f32_compute(a: &Tensor<f32>, b: &Tensor<f32>) -> Result<Tensor<f32>, TensorError> {
+    let m = a.shape.get(0).copied().unwrap_or(0);
+    let k_a = a.shape.get(1).copied().unwrap_or(0);
+    let k_b = b.shape.get(0).copied().unwrap_or(0);
+    let n = b.shape.get(1).copied().unwrap_or(0);
+
+    // Note: Rank checks are expected to be done by the public matmul calling this.
+    // if a.rank() != 2 || b.rank() != 2 {
+    //     return Err(TensorError::InvalidDimension(
+    //         "Matmul currently only supports 2D tensors".to_string(),
+    //     ));
+    // }
+
+    // Note: Compatibility checks are expected to be done by the public matmul calling this.
+    // if k_a != k_b {
+    //     return Err(TensorError::IncompatibleShapes(format!(
+    //         "Incompatible shapes for matmul: A has shape [{}, {}], B has shape [{}, {}]",
+    //         m, k_a, k_b, n
+    //     )));
+    // }
+
+    let mut result_data = vec![0.0f32; m * n];
+
+    if cfg!(target_arch = "x86_64") &&
+        is_x86_feature_detected!("avx2") &&
+        is_x86_feature_detected!("fma") &&
+        m > 0 && k_a > 0 && n > 0
+    {
+        // Transpose B for the SIMD kernel
+        let b_transposed = b.transpose()?; // This transpose is on Tensor<f32>
+        unsafe {
+            // Pass b_transposed.data to the AVX2 kernel
+            matmul_2d_avx2_fma(&a.data, &b_transposed.data, m, k_a, n, &mut result_data);
+        }
+    } else if m > 0 && k_a > 0 && n > 0 {
+        // Scalar path
+        for i_idx in 0..m {
+            for j_idx in 0..n {
+                let mut sum = 0.0f32;
+                for k_sidx in 0..k_a {
+                    // Accessing data directly, assuming a and b are &Tensor<f32>
+                    sum += a.data[i_idx * k_a + k_sidx] * b.data[k_sidx * n + j_idx];
+                }
+                result_data[i_idx * n + j_idx] = sum;
+            }
+        }
+    }
+    // If m, n, or k_a is 0, result_data will be empty or loops won't run, which is correct.
+    Tensor::new(result_data, vec![m, n])
+}
+
+fn softmax_f32_compute(input: &Tensor<f32>, axis: usize) -> Result<Tensor<f32>, TensorError> {
+    // Axis validation is implicitly handled by the check `axis >= input.rank()` before calling.
+    // However, to be safe, this helper could also perform it if called from elsewhere.
+    // For now, assuming the public `softmax` method does the primary axis check.
+
+    let mut result_data = input.data.clone();
+    let axis_size = input.shape[axis]; // input.shape instead of self.shape
+    if axis_size == 0 {
+        return Ok(Tensor::new(result_data, input.shape.clone())?);
+    }
+    let outer_dims_product: usize = input.shape[..axis].iter().product();
+    let inner_dims_product: usize = input.shape[axis + 1..].iter().product();
+
+    for i in 0..outer_dims_product {
+        for j in 0..inner_dims_product {
+            let mut current_processing_slice: Vec<f32> = Vec::with_capacity(axis_size);
+            for k in 0..axis_size {
+                let current_flat_idx = input._flat_index_for_softmax(i, k, j, axis, inner_dims_product)?; // input._ instead of self._
+                current_processing_slice.push(input.data[current_flat_idx]); // input.data instead of self.data
+            }
+
+            if cfg!(target_arch = "x86_64") &&
+                is_x86_feature_detected!("avx2") &&
+                is_x86_feature_detected!("fma") &&
+                !current_processing_slice.is_empty()
+            {
+                unsafe {
+                    softmax_slice_avx2(&mut current_processing_slice);
+                }
+            } else if !current_processing_slice.is_empty() {
+                let max_val_scalar = current_processing_slice.iter().fold(f32::NEG_INFINITY, |acc, &x| acc.max(x));
+                let mut sum_exp_values_scalar = 0.0f32;
+
+                for val_ref in current_processing_slice.iter_mut() {
+                    *val_ref = (*val_ref - max_val_scalar).exp();
+                    sum_exp_values_scalar += *val_ref;
+                }
+
+                if sum_exp_values_scalar == 0.0 { sum_exp_values_scalar = 1e-9; } // Avoid division by zero
+                let inv_sum_exp_scalar = sum_exp_values_scalar.recip();
+                for val_ref in current_processing_slice.iter_mut() {
+                    *val_ref *= inv_sum_exp_scalar;
+                }
+            }
+
+            for k in 0..axis_size {
+                let current_flat_idx = input._flat_index_for_softmax(i, k, j, axis, inner_dims_product)?; // input._
+                if let Some(val_to_write) = current_processing_slice.get(k) {
+                        if let Some(target_loc) = result_data.get_mut(current_flat_idx) {
+                        *target_loc = *val_to_write;
+                        } else {
+                        return Err(TensorError::OutOfBounds(format!("Softmax: Target index {} out of bounds for result_data", current_flat_idx)));
+                        }
+                } else {
+                        return Err(TensorError::OutOfBounds(format!("Softmax: Source index {} out of bounds for current_slice", k)));
+                }
+            }
+        }
+    }
+    Tensor::new(result_data, input.shape.clone())
+}
+
+impl<F: FloatType> Tensor<F> {
+    pub fn matmul(a: &Tensor<F>, b: &Tensor<F>) -> Result<Tensor<F>, TensorError> {
+        if a.rank() != 2 || b.rank() != 2 {
+            return Err(TensorError::InvalidDimension(
+                "Matmul currently only supports 2D tensors".to_string(),
+            ));
+        }
+
+        let k_a = a.shape.get(1).copied().unwrap_or(0);
+        let k_b = b.shape.get(0).copied().unwrap_or(0);
+
+        if k_a != k_b {
+            return Err(TensorError::IncompatibleShapes(format!(
+                "Incompatible shapes for matmul: A has shape {:?}, B has shape {:?}",
+                a.shape, b.shape
+            )));
+        }
+
+        let a_f32 = a.convert::<f32>()?;
+        let b_f32 = b.convert::<f32>()?;
+
+        let result_f32 = matmul_f32_compute(&a_f32, &b_f32)?;
+
+        result_f32.convert::<F>()
+    }
+
+    pub fn softmax(&self, axis: usize) -> Result<Tensor<F>, TensorError> {
+        if axis >= self.rank() {
+            return Err(TensorError::UnsupportedAxis(format!(
+                "Axis {} is out of bounds for tensor with rank {}",
+                axis, self.rank()
+            )));
+        }
+
+        let self_f32 = self.convert::<f32>()?;
+        let result_f32 = softmax_f32_compute(&self_f32, axis)?;
+        result_f32.convert::<F>()
+    }
+}
+
 impl std::error::Error for TensorError {}
+
+// FloatType Trait Definition
+pub trait FloatType:
+    Copy + Clone + Debug + PartialEq + PartialOrd + Send + Sync + 'static + FloatCore + NumAssign
+{
+    const ZERO: Self;
+    const ONE: Self;
+
+    fn from_f32(f: f32) -> Self;
+    fn to_f32(&self) -> f32;
+}
+
+impl FloatType for f32 {
+    const ZERO: Self = 0.0f32;
+    const ONE: Self = 1.0f32;
+
+    fn from_f32(val: f32) -> Self {
+        val
+    }
+
+    fn to_f32(&self) -> f32 {
+        *self
+    }
+}
+
+impl FloatType for f16 {
+    const ZERO: Self = f16::from_f32_const(0.0);
+    const ONE: Self = f16::from_f32_const(1.0);
+
+    fn from_f32(val: f32) -> Self {
+        f16::from_f32(val)
+    }
+
+    fn to_f32(&self) -> f32 {
+        self.to_f32()
+    }
+}
+
+impl FloatType for bf16 {
+    const ZERO: Self = bf16::from_f32_const(0.0);
+    const ONE: Self = bf16::from_f32_const(1.0);
+
+    fn from_f32(val: f32) -> Self {
+        bf16::from_f32(val)
+    }
+
+    fn to_f32(&self) -> f32 {
+        self.to_f32()
+    }
+}
 
 // Tensor Struct Definition
 #[derive(Debug, Clone)]
@@ -119,6 +325,25 @@ impl<T> Tensor<T> {
         }
         self.data.get_mut(flat_idx).ok_or_else(|| TensorError::OutOfBounds(format!("Calculated flat index {} out of bounds for data length {} (mut access)", flat_idx, self.data.len())))
     }
+
+    // Moved _flat_index_for_softmax here as it's generic
+    fn _flat_index_for_softmax(&self, outer_idx: usize, axis_idx: usize, inner_idx: usize, axis: usize, _inner_dims_product: usize) -> Result<usize, TensorError> {
+        let mut md_indices = vec![0; self.rank()];
+        let mut current_outer = outer_idx;
+        for d_rev_idx in 0..axis {
+            let d = axis - 1 - d_rev_idx;
+            md_indices[d] = current_outer % self.shape[d];
+            current_outer /= self.shape[d];
+        }
+        md_indices[axis] = axis_idx;
+        let mut current_inner = inner_idx;
+        for d_rev_idx in 0..(self.rank() - 1 - axis) {
+            let d = self.rank() - 1 - d_rev_idx;
+            md_indices[d] = current_inner % self.shape[d];
+            current_inner /= self.shape[d];
+        }
+        self._flat_index(&md_indices)
+    }
 }
 
 impl<T: Clone> Tensor<T> {
@@ -159,12 +384,120 @@ impl<T: Clone> Tensor<T> {
     }
 }
 
-
-impl<T: Default + Clone> Tensor<T> {
+impl<F: FloatType> Tensor<F> {
     pub fn zeros(shape: Vec<usize>) -> Result<Self, TensorError> {
-        let num_elements = if shape.is_empty() {1} else if shape.iter().any(|&d| d==0) {0} else {shape.iter().product()};
-        let data = vec![T::default(); num_elements];
+        let num_elements = if shape.is_empty() {
+            1 // Scalar
+        } else if shape.iter().any(|&d| d == 0) {
+            0 // Zero elements if any dimension is zero
+        } else {
+            shape.iter().product()
+        };
+        let data = vec![F::ZERO; num_elements];
         Tensor::new(data, shape)
+    }
+
+    pub fn convert<T_OUT: FloatType>(&self) -> Result<Tensor<T_OUT>, TensorError> {
+        if self.data.is_empty() {
+            // Handle tensors with no data (e.g. shape [2,0,3])
+            Tensor::new(Vec::new(), self.shape.clone())
+        } else {
+            let converted_data: Vec<T_OUT> = self
+                .data
+                .iter()
+                .map(|element| T_OUT::from_f32(element.to_f32()))
+                .collect();
+            Tensor::new(converted_data, self.shape.clone())
+        }
+    }
+
+    pub fn scalar_mul(&self, scalar: F) -> Result<Tensor<F>, TensorError> {
+        if self.data.is_empty() && self.num_elements() == 0 {
+            return Ok(self.clone());
+        }
+        let mut new_data = self.data.clone();
+        for val in new_data.iter_mut() {
+            *val *= scalar;
+        }
+        Tensor::new(new_data, self.shape.clone())
+    }
+
+    pub fn concat(tensors: &[&Tensor<F>], axis: usize) -> Result<Tensor<F>, TensorError> {
+        if tensors.is_empty() {
+            return Err(TensorError::InvalidDimension("Input tensor slice is empty for concat".to_string()));
+        }
+        let first_tensor = tensors[0];
+        let rank = first_tensor.rank();
+        if axis >= rank {
+            return Err(TensorError::InvalidDimension(format!(
+                "Concatenation axis {} is out of bounds for tensor rank {}",
+                axis, rank
+            )));
+        }
+        let mut output_shape = first_tensor.shape.clone();
+        let mut concat_dim_size = 0;
+        let mut total_elements = 0;
+        for (i, t) in tensors.iter().enumerate() {
+            if t.rank() != rank {
+                return Err(TensorError::IncompatibleShapes(format!(
+                    "All tensors must have the same rank. Tensor 0 has rank {}, tensor {} has rank {}",
+                    rank, i, t.rank()
+                )));
+            }
+            for (d, &dim_size) in t.shape.iter().enumerate() {
+                if d != axis && dim_size != output_shape[d] {
+                    return Err(TensorError::IncompatibleShapes(format!(
+                        "Dimension {} mismatch: expected {} (from tensor 0), got {} (from tensor {})",
+                        d, output_shape[d], dim_size, i
+                    )));
+                }
+            }
+            concat_dim_size += t.shape[axis];
+            total_elements += t.num_elements();
+        }
+        output_shape[axis] = concat_dim_size;
+        if total_elements == 0 {
+            return Tensor::new(Vec::new(), output_shape);
+        }
+        let mut output_data = Vec::with_capacity(total_elements);
+        let mut first_tensor_strides = vec![0; rank];
+        if rank > 0 {
+            first_tensor_strides[rank - 1] = 1;
+            for d in (0..rank - 1).rev() {
+                first_tensor_strides[d] = first_tensor_strides[d + 1] * first_tensor.shape[d + 1];
+            }
+        }
+        let outer_dims_product: usize = first_tensor.shape[..axis].iter().product();
+        for outer_idx in 0..outer_dims_product {
+            for t_ref in tensors {
+                let current_tensor_axis_dim = t_ref.shape[axis];
+                let current_tensor_inner_dims_product: usize = t_ref.shape[axis+1..].iter().product();
+                for axis_el_idx in 0..current_tensor_axis_dim {
+                    let mut current_input_flat_idx = 0;
+                    let mut temp_outer_idx = outer_idx;
+                    for d_rev_idx in 0..axis { // Corrected d_idx_rev to d_rev_idx
+                        let d = axis - 1 - d_rev_idx;
+                        current_input_flat_idx += (temp_outer_idx % first_tensor.shape[d]) * first_tensor_strides[d];
+                        temp_outer_idx /= first_tensor.shape[d];
+                    }
+                    current_input_flat_idx += axis_el_idx * current_tensor_inner_dims_product;
+
+                    if t_ref.data.is_empty() && current_tensor_inner_dims_product > 0 {
+                         return Err(TensorError::ShapeMismatch(format!("Tensor data is empty but shape {:?} implies non-empty for concat.", t_ref.shape)));
+                    }
+                    if !t_ref.data.is_empty() {
+                        if current_input_flat_idx + current_tensor_inner_dims_product <= t_ref.data.len() {
+                             output_data.extend_from_slice(&t_ref.data[current_input_flat_idx .. current_input_flat_idx + current_tensor_inner_dims_product]);
+                        } else {
+                            return Err(TensorError::OutOfBounds(format!("Concat: Calculated source slice (start: {}, len: {}) for tensor with data len {} is out of bounds. Tensor shape: {:?}, Outer idx: {}, Axis el idx: {}", current_input_flat_idx, current_tensor_inner_dims_product, t_ref.data.len(), t_ref.shape, outer_idx, axis_el_idx)));
+                        }
+                    } else if current_tensor_inner_dims_product > 0 {
+                         return Err(TensorError::ShapeMismatch(format!("Concat: Tensor data is empty but shape {:?} implies non-empty elements to copy.", t_ref.shape)));
+                    }
+                }
+            }
+        }
+        Tensor::new(output_data, output_shape)
     }
 }
 
@@ -519,236 +852,62 @@ impl Tensor<f32> {
         Err(TensorError::UnsupportedOperation("gelu_simd requires portable_simd feature, which is unstable.".to_string()))
     }
 
-    pub fn scalar_mul(&self, scalar: f32) -> Result<Tensor<f32>, TensorError> {
-        if self.data.is_empty() && self.num_elements() == 0 {
-            return Ok(self.clone());
-        }
-        let mut new_data = self.data.clone();
-        for val in new_data.iter_mut() {
-            *val *= scalar;
-        }
-        Tensor::new(new_data, self.shape.clone())
-    }
-
-    pub fn concat(tensors: &[&Tensor<f32>], axis: usize) -> Result<Tensor<f32>, TensorError> {
-        if tensors.is_empty() {
-            return Err(TensorError::InvalidDimension("Input tensor slice is empty for concat".to_string()));
-        }
-        let first_tensor = tensors[0];
-        let rank = first_tensor.rank();
-        if axis >= rank {
-            return Err(TensorError::InvalidDimension(format!(
-                "Concatenation axis {} is out of bounds for tensor rank {}",
-                axis, rank
-            )));
-        }
-        let mut output_shape = first_tensor.shape.clone();
-        let mut concat_dim_size = 0;
-        let mut total_elements = 0;
-        for (i, t) in tensors.iter().enumerate() {
-            if t.rank() != rank {
-                return Err(TensorError::IncompatibleShapes(format!(
-                    "All tensors must have the same rank. Tensor 0 has rank {}, tensor {} has rank {}",
-                    rank, i, t.rank()
-                )));
-            }
-            for (d, &dim_size) in t.shape.iter().enumerate() {
-                if d != axis && dim_size != output_shape[d] {
-                    return Err(TensorError::IncompatibleShapes(format!(
-                        "Dimension {} mismatch: expected {} (from tensor 0), got {} (from tensor {})",
-                        d, output_shape[d], dim_size, i
-                    )));
-                }
-            }
-            concat_dim_size += t.shape[axis];
-            total_elements += t.num_elements();
-        }
-        output_shape[axis] = concat_dim_size;
-        if total_elements == 0 {
-            return Tensor::new(Vec::new(), output_shape);
-        }
-        let mut output_data = Vec::with_capacity(total_elements);
-        let mut first_tensor_strides = vec![0; rank];
-        if rank > 0 {
-            first_tensor_strides[rank - 1] = 1;
-            for d in (0..rank - 1).rev() {
-                first_tensor_strides[d] = first_tensor_strides[d + 1] * first_tensor.shape[d + 1];
-            }
-        }
-        let outer_dims_product: usize = first_tensor.shape[..axis].iter().product();
-        for outer_idx in 0..outer_dims_product {
-            for t_ref in tensors {
-                let current_tensor_axis_dim = t_ref.shape[axis];
-                let current_tensor_inner_dims_product: usize = t_ref.shape[axis+1..].iter().product();
-                for axis_el_idx in 0..current_tensor_axis_dim {
-                    let mut current_input_flat_idx = 0;
-                    let mut temp_outer_idx = outer_idx;
-                     // This logic calculates the offset due to dimensions *before* the concatenation axis,
-                     // using the strides of the *first_tensor* as a reference for those dimensions,
-                     // which is valid because non-axis dimensions must match across all tensors.
-                    for d_rev_idx in 0..axis {
-                        let d = axis - 1 - d_idx_rev;
-                        current_input_flat_idx += (temp_outer_idx % first_tensor.shape[d]) * first_tensor_strides[d];
-                        temp_outer_idx /= first_tensor.shape[d];
-                    }
-                    // Now, add offset from the concatenation axis itself for the current tensor `t_ref`
-                    // and the specific slice `axis_el_idx` along that axis.
-                    // The number of elements per "row" along the concat axis in `t_ref` is `current_tensor_inner_dims_product`.
-                    current_input_flat_idx += axis_el_idx * current_tensor_inner_dims_product;
-
-
-                    if t_ref.data.is_empty() && current_tensor_inner_dims_product > 0 {
-                         return Err(TensorError::ShapeMismatch(format!("Tensor data is empty but shape {:?} implies non-empty for concat.", t_ref.shape)));
-                    }
-                    if !t_ref.data.is_empty() {
-                        if current_input_flat_idx + current_tensor_inner_dims_product <= t_ref.data.len() {
-                             output_data.extend_from_slice(&t_ref.data[current_input_flat_idx .. current_input_flat_idx + current_tensor_inner_dims_product]);
-                        } else {
-                            return Err(TensorError::OutOfBounds(format!("Concat: Calculated source slice (start: {}, len: {}) for tensor with data len {} is out of bounds. Tensor shape: {:?}, Outer idx: {}, Axis el idx: {}", current_input_flat_idx, current_tensor_inner_dims_product, t_ref.data.len(), t_ref.shape, outer_idx, axis_el_idx)));
-                        }
-                    } else if current_tensor_inner_dims_product > 0 {
-                         return Err(TensorError::ShapeMismatch(format!("Concat: Tensor data is empty but shape {:?} implies non-empty elements to copy.", t_ref.shape)));
-                    }
-                }
-            }
-        }
-        Tensor::new(output_data, output_shape)
-    }
-
     pub fn matmul_simd(&self, _other: &Tensor<f32>) -> Result<Tensor<f32>, TensorError> {
         Err(TensorError::UnsupportedOperation("matmul_simd requires portable_simd feature, which is unstable.".to_string()))
     }
 
-    pub fn matmul(a: &Tensor<f32>, b: &Tensor<f32>) -> Result<Tensor<f32>, TensorError> {
-        let m = a.shape.get(0).copied().unwrap_or(0);
-        let k_a = a.shape.get(1).copied().unwrap_or(0);
-        let k_b = b.shape.get(0).copied().unwrap_or(0);
-        let n = b.shape.get(1).copied().unwrap_or(0);
+    // pub fn matmul(a: &Tensor<f32>, b: &Tensor<f32>) -> Result<Tensor<f32>, TensorError> {
+    //     let m = a.shape.get(0).copied().unwrap_or(0);
+    //     let k_a = a.shape.get(1).copied().unwrap_or(0);
+    //     let k_b = b.shape.get(0).copied().unwrap_or(0);
+    //     let n = b.shape.get(1).copied().unwrap_or(0);
 
-        if a.rank() != 2 || b.rank() != 2 {
-            return Err(TensorError::InvalidDimension(
-                "Matmul currently only supports 2D tensors".to_string(),
-            ));
-        }
+    //     if a.rank() != 2 || b.rank() != 2 {
+    //         return Err(TensorError::InvalidDimension(
+    //             "Matmul currently only supports 2D tensors".to_string(),
+    //         ));
+    //     }
 
-        if k_a != k_b {
-            return Err(TensorError::IncompatibleShapes(format!(
-                "Incompatible shapes for matmul: A has shape [{}, {}], B has shape [{}, {}]",
-                m, k_a, k_b, n
-            )));
-        }
+    //     if k_a != k_b {
+    //         return Err(TensorError::IncompatibleShapes(format!(
+    //             "Incompatible shapes for matmul: A has shape [{}, {}], B has shape [{}, {}]",
+    //             m, k_a, k_b, n
+    //         )));
+    //     }
 
-        let mut result_data = vec![0.0f32; m * n];
+    //     let mut result_data = vec![0.0f32; m * n];
 
-        if cfg!(target_arch = "x86_64") &&
-           is_x86_feature_detected!("avx2") &&
-           is_x86_feature_detected!("fma") &&
-           m > 0 && k_a > 0 && n > 0
-        {
-            // Transpose B for the SIMD kernel
-            let b_transposed = b.transpose()?;
-            unsafe {
-                // Pass b_transposed.data to the AVX2 kernel
-                matmul_2d_avx2_fma(&a.data, &b_transposed.data, m, k_a, n, &mut result_data);
-            }
-        } else if m > 0 && k_a > 0 && n > 0 {
-            // Scalar path
-            for i_idx in 0..m {
-                for j_idx in 0..n {
-                    let mut sum = 0.0;
-                    for k_sidx in 0..k_a {
-                        sum += a.data[i_idx * k_a + k_sidx] * b.data[k_sidx * n + j_idx];
-                    }
-                    result_data[i_idx * n + j_idx] = sum;
-                }
-            }
-        }
-        // If m, n, or k_a is 0, result_data will be empty or loops won't run, which is correct.
-        Tensor::new(result_data, vec![m, n])
-    }
+    //     if cfg!(target_arch = "x86_64") &&
+    //        is_x86_feature_detected!("avx2") &&
+    //        is_x86_feature_detected!("fma") &&
+    //        m > 0 && k_a > 0 && n > 0
+    //     {
+    //         // Transpose B for the SIMD kernel
+    //         let b_transposed = b.transpose()?;
+    //         unsafe {
+    //             // Pass b_transposed.data to the AVX2 kernel
+    //             matmul_2d_avx2_fma(&a.data, &b_transposed.data, m, k_a, n, &mut result_data);
+    //         }
+    //     } else if m > 0 && k_a > 0 && n > 0 {
+    //         // Scalar path
+    //         for i_idx in 0..m {
+    //             for j_idx in 0..n {
+    //                 let mut sum = 0.0;
+    //                 for k_sidx in 0..k_a {
+    //                     sum += a.data[i_idx * k_a + k_sidx] * b.data[k_sidx * n + j_idx];
+    //                 }
+    //                 result_data[i_idx * n + j_idx] = sum;
+    //             }
+    //         }
+    //     }
+    //     // If m, n, or k_a is 0, result_data will be empty or loops won't run, which is correct.
+    //     Tensor::new(result_data, vec![m, n])
+    // }
 
-    pub fn softmax(&self, axis: usize) -> Result<Tensor<f32>, TensorError> {
-        if axis >= self.rank() {
-            return Err(TensorError::UnsupportedAxis(format!(
-                "Axis {} is out of bounds for tensor with rank {}",
-                axis, self.rank()
-            )));
-        }
+    // Removed softmax from impl Tensor<f32>
+    // pub fn softmax(&self, axis: usize) -> Result<Tensor<f32>, TensorError> { ... }
 
-        let mut result_data = self.data.clone();
-        let axis_size = self.shape[axis];
-        if axis_size == 0 {
-            return Ok(Tensor::new(result_data, self.shape.clone())?);
-        }
-        let outer_dims_product: usize = self.shape[..axis].iter().product();
-        let inner_dims_product: usize = self.shape[axis + 1..].iter().product();
-
-        for i in 0..outer_dims_product {
-            for j in 0..inner_dims_product {
-                let mut current_processing_slice: Vec<f32> = Vec::with_capacity(axis_size);
-                for k in 0..axis_size {
-                    let current_flat_idx = self._flat_index_for_softmax(i, k, j, axis, inner_dims_product)?;
-                    current_processing_slice.push(self.data[current_flat_idx]);
-                }
-
-                if cfg!(target_arch = "x86_64") &&
-                   is_x86_feature_detected!("avx2") &&
-                   is_x86_feature_detected!("fma") &&
-                   !current_processing_slice.is_empty()
-                {
-                    unsafe {
-                        softmax_slice_avx2(&mut current_processing_slice);
-                    }
-                } else if !current_processing_slice.is_empty() {
-                    let max_val_scalar = current_processing_slice.iter().fold(f32::NEG_INFINITY, |acc, &x| acc.max(x));
-                    let mut sum_exp_values_scalar = 0.0f32;
-
-                    for val_ref in current_processing_slice.iter_mut() {
-                        *val_ref = (*val_ref - max_val_scalar).exp();
-                        sum_exp_values_scalar += *val_ref;
-                    }
-
-                    if sum_exp_values_scalar == 0.0 { sum_exp_values_scalar = 1e-9; }
-                    let inv_sum_exp_scalar = sum_exp_values_scalar.recip();
-                    for val_ref in current_processing_slice.iter_mut() {
-                        *val_ref *= inv_sum_exp_scalar;
-                    }
-                }
-
-                for k in 0..axis_size {
-                    let current_flat_idx = self._flat_index_for_softmax(i, k, j, axis, inner_dims_product)?;
-                    if let Some(val_to_write) = current_processing_slice.get(k) {
-                         if let Some(target_loc) = result_data.get_mut(current_flat_idx) {
-                            *target_loc = *val_to_write;
-                         } else {
-                            return Err(TensorError::OutOfBounds(format!("Softmax: Target index {} out of bounds for result_data", current_flat_idx)));
-                         }
-                    } else {
-                         return Err(TensorError::OutOfBounds(format!("Softmax: Source index {} out of bounds for current_slice", k)));
-                    }
-                }
-            }
-        }
-        Tensor::new(result_data, self.shape.clone())
-    }
-
-    fn _flat_index_for_softmax(&self, outer_idx: usize, axis_idx: usize, inner_idx: usize, axis: usize, _inner_dims_product: usize) -> Result<usize, TensorError> {
-        let mut md_indices = vec![0; self.rank()];
-        let mut current_outer = outer_idx;
-        for d_rev_idx in 0..axis {
-            let d = axis - 1 - d_idx_rev;
-            md_indices[d] = current_outer % self.shape[d];
-            current_outer /= self.shape[d];
-        }
-        md_indices[axis] = axis_idx;
-        let mut current_inner = inner_idx;
-        for d_rev_idx in 0..(self.rank() - 1 - axis) {
-            let d = self.rank() - 1 - d_rev_idx;
-            md_indices[d] = current_inner % self.shape[d];
-            current_inner /= self.shape[d];
-        }
-        self._flat_index(&md_indices)
-    }
+    // _flat_index_for_softmax was here, moved to impl<T> Tensor<T>
 
     pub fn layernorm(&self, gamma: &Tensor<f32>, beta: &Tensor<f32>, epsilon: f32) -> Result<Tensor<f32>, TensorError> {
         if self.rank() == 0 {
