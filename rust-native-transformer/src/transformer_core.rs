@@ -129,7 +129,7 @@ pub(crate) mod tensor_ops {
     }
 
     pub fn softmax_f16(a: &mut Tensor<f16>, axis: usize) -> Result<(), TensorError> {
-        a.softmax(Some(axis))
+        a.softmax(Some(axis)) // Corrected
     }
 
     pub fn layernorm_f16(a: &mut Tensor<f16>, gamma: &Tensor<f16>, beta: &Tensor<f16>, epsilon: f32) -> Result<(), TensorError> {
@@ -261,7 +261,7 @@ pub(crate) mod tensor_ops {
             return Err(TensorError::ShapeMismatch("Tensor has non-zero shape product but empty data for split_dim1.".to_string()));
         }
         if tensor.data.is_empty() && tensor.num_elements() == 0 {
-             for _ in 0..num_chunks {
+            for _ in 0..num_chunks {
                 result_tensors.push(Tensor::new(Vec::<T>::new(), vec![rows, chunk_cols])?);
             }
             return Ok(result_tensors);
@@ -560,7 +560,7 @@ impl FeedForward {
         c_fc_b: Tensor<f16>,
         c_proj_w: Tensor<f16>,
         c_proj_b: Tensor<f16>,
-        config: &Config // Keep config for validation if needed, though not strictly used if shapes are pre-validated
+        config: &Config // Keep config for validation if needed
     ) -> Result<Self, TransformerError> {
         let n_embd = config.n_embd;
         let n_hidden = 4 * n_embd; 
@@ -746,7 +746,7 @@ impl GPT2Model {
 
         Ok(GPT2Model {
             config: conf,
-            wte, wpe, // Already f16
+            wte, wpe,
             blocks: blocks_vec,
             ln_f_g: ln_f_g_f32.to_f16_tensor()?,
             ln_f_b: ln_f_b_f32.to_f16_tensor()?,
@@ -888,16 +888,12 @@ impl GPT2Model {
 }
 
 // Trait for MHA specific tensor permutations and slicing.
-// This might need to become generic or have f16 specific versions if internal MHA ops move to f16.
-// For now, it's used by f32 tensors which are then converted if needed.
-trait TensorExtMHA<T> { // Made generic over T
+trait TensorExtMHA<T> {
     fn permute_mha_qkv(&self) -> Result<Tensor<T>, TransformerError>;
     fn permute_mha_kt(&self) -> Result<Tensor<T>, TransformerError>;
     fn permute_mha_output(&self) -> Result<Tensor<T>, TransformerError>;
     fn slice_mha(&self, batch_idx: usize, head_idx: usize) -> Result<Tensor<T>, TransformerError>;
     fn slice_one_head_all_batches(&self, head_idx: usize) -> Result<Tensor<T>, TransformerError>;
-    // stack_heads_from_list might need to be type specific if types inside list are fixed
-    // fn stack_heads_from_list(head_tensors: &[Tensor<T>]) -> Result<Tensor<T>, TransformerError>;
     fn slice_mha_for_kv(&self, batch_idx: usize, head_idx: usize, kv_seq_len: usize) -> Result<Tensor<T>, TransformerError>;
     fn slice_mha_custom(&self, batch_idx: usize, head_idx: usize, q_seq_len: usize, kv_seq_len: usize) -> Result<Tensor<T>, TransformerError>;
 }
@@ -1076,15 +1072,7 @@ impl<U: Clone + Default + Send + Sync + Copy + std::fmt::Debug + PartialEq + 'st
 impl Tensor<f16> {
     fn stack_heads_from_list_f16(head_tensors: &[Tensor<f16>]) -> Result<Tensor<f16>, TransformerError> {
         if head_tensors.is_empty() {
-             // If n_head is 0, this might be valid. However, n_head should be > 0 typically.
-             // Let's assume for now that if the list is empty, it's an error or needs context.
-             // For an empty sequence (S=0), this might be okay.
-             // If the first head tensor has S=0, then B*H*0*D = 0 elements.
              if head_tensors.get(0).map_or(true, |t| t.shape.get(1).map_or(true, |&s_dim| s_dim == 0) || t.shape.get(0).map_or(true, |&b_dim| b_dim ==0) )) {
-                // This case implies S=0 or B=0. We can return an empty tensor with appropriate shape.
-                // However, determining B, H, S, D is tricky if list is empty.
-                // If list is not empty but S=0, then first_head.shape[1] is 0.
-                // For now, let's require non-empty list if we expect heads.
                 return Err(TransformerError::TensorError(TensorError::InvalidDimension("Cannot stack empty list of head tensors if n_head > 0".into())));
             }
         }
@@ -1095,7 +1083,7 @@ impl Tensor<f16> {
         let h = head_tensors.len();
         let new_shape = vec![b,h,s,d];
         let total_elements = b*h*s*d;
-        let mut new_data = if total_elements > 0 { vec![f16::from_f32(0.0); total_elements] } else { Vec::new() }; // Use f16 default
+        let mut new_data = if total_elements > 0 { vec![f16::from_f32(0.0); total_elements] } else { Vec::new() };
 
         for (h_idx, head_tensor) in head_tensors.iter().enumerate() {
             if head_tensor.shape != first_head.shape {
@@ -1124,7 +1112,7 @@ impl Tensor<f16> {
 }
 
 
-impl Tensor<f16> { // Add transpose_data_generic_f16 here
+impl Tensor<f16> {
     pub fn transpose_data_generic_f16(data: &[f16], rows: usize, cols: usize) -> Vec<f16> {
         if rows * cols != data.len() && !data.is_empty() { 
             eprintln!("Warning: Transpose data length mismatch for f16. Data len: {}, rows*cols: {}", data.len(), rows*cols);
@@ -1154,7 +1142,7 @@ mod tests {
             vocab_size: 10,
             block_size: 8,
             bias: true,
-            dtype: ModelDataType::F32, // Added dtype
+            dtype: ModelDataType::F32,
         }
     }
     
@@ -1247,19 +1235,27 @@ mod tests {
         let mut weights_for_block = create_dummy_weights_for_model(&config, true); 
         
         let attn_prefix = "h.0.attn.";
-        let attn = MultiHeadAttention::new(Arc::clone(&config), &mut weights_for_block, attn_prefix).unwrap();
+        let attn_w_q = GPT2Model::get_weight(&mut weights_for_block, &format!("{}w_q.weight", attn_prefix), Some(&[config.n_embd, config.n_embd])).unwrap().to_f16_tensor().unwrap();
+        let attn_b_q = GPT2Model::get_weight(&mut weights_for_block, &format!("{}w_q.bias", attn_prefix), Some(&[config.n_embd])).unwrap().to_f16_tensor().unwrap();
+        let attn_w_k = GPT2Model::get_weight(&mut weights_for_block, &format!("{}w_k.weight", attn_prefix), Some(&[config.n_embd, config.n_embd])).unwrap().to_f16_tensor().unwrap();
+        let attn_b_k = GPT2Model::get_weight(&mut weights_for_block, &format!("{}w_k.bias", attn_prefix), Some(&[config.n_embd])).unwrap().to_f16_tensor().unwrap();
+        let attn_w_v = GPT2Model::get_weight(&mut weights_for_block, &format!("{}w_v.weight", attn_prefix), Some(&[config.n_embd, config.n_embd])).unwrap().to_f16_tensor().unwrap();
+        let attn_b_v = GPT2Model::get_weight(&mut weights_for_block, &format!("{}w_v.bias", attn_prefix), Some(&[config.n_embd])).unwrap().to_f16_tensor().unwrap();
+        let attn_c_proj_w = GPT2Model::get_weight(&mut weights_for_block, &format!("{}c_proj.weight", attn_prefix), Some(&[config.n_embd, config.n_embd])).unwrap().to_f16_tensor().unwrap();
+        let attn_c_proj_b = GPT2Model::get_weight(&mut weights_for_block, &format!("{}c_proj.bias", attn_prefix), Some(&[config.n_embd])).unwrap().to_f16_tensor().unwrap();
+        let attn = MultiHeadAttention::new(Arc::clone(&config), attn_w_q, attn_b_q, attn_w_k, attn_b_k, attn_w_v, attn_b_v, attn_c_proj_w, attn_c_proj_b).unwrap();
         
         let n_embd = config.n_embd;
-        let mlp_c_fc_w = GPT2Model::get_weight(&mut weights_for_block, &format!("h.0.mlp.c_fc.weight"), Some(&[n_embd, 4*n_embd])).unwrap();
-        let mlp_c_fc_b = GPT2Model::get_weight(&mut weights_for_block, &format!("h.0.mlp.c_fc.bias"), Some(&[4*n_embd])).unwrap();
-        let mlp_c_proj_w = GPT2Model::get_weight(&mut weights_for_block, &format!("h.0.mlp.c_proj.weight"), Some(&[4*n_embd, n_embd])).unwrap();
-        let mlp_c_proj_b = GPT2Model::get_weight(&mut weights_for_block, &format!("h.0.mlp.c_proj.bias"), Some(&[n_embd])).unwrap();
+        let mlp_c_fc_w = GPT2Model::get_weight(&mut weights_for_block, &format!("h.0.mlp.c_fc.weight"), Some(&[n_embd, 4*n_embd])).unwrap().to_f16_tensor().unwrap();
+        let mlp_c_fc_b = GPT2Model::get_weight(&mut weights_for_block, &format!("h.0.mlp.c_fc.bias"), Some(&[4*n_embd])).unwrap().to_f16_tensor().unwrap();
+        let mlp_c_proj_w = GPT2Model::get_weight(&mut weights_for_block, &format!("h.0.mlp.c_proj.weight"), Some(&[4*n_embd, n_embd])).unwrap().to_f16_tensor().unwrap();
+        let mlp_c_proj_b = GPT2Model::get_weight(&mut weights_for_block, &format!("h.0.mlp.c_proj.bias"), Some(&[n_embd])).unwrap().to_f16_tensor().unwrap();
         let mlp = FeedForward::new(mlp_c_fc_w, mlp_c_fc_b, mlp_c_proj_w, mlp_c_proj_b, &config).unwrap(); 
 
-        let ln_1_g = GPT2Model::get_weight(&mut weights_for_block, &format!("h.0.ln_1.weight"), Some(&[n_embd])).unwrap();
-        let ln_1_b = GPT2Model::get_weight(&mut weights_for_block, &format!("h.0.ln_1.bias"), Some(&[n_embd])).unwrap();
-        let ln_2_g = GPT2Model::get_weight(&mut weights_for_block, &format!("h.0.ln_2.weight"), Some(&[n_embd])).unwrap();
-        let ln_2_b = GPT2Model::get_weight(&mut weights_for_block, &format!("h.0.ln_2.bias"), Some(&[n_embd])).unwrap();
+        let ln_1_g = GPT2Model::get_weight(&mut weights_for_block, &format!("h.0.ln_1.weight"), Some(&[n_embd])).unwrap().to_f16_tensor().unwrap();
+        let ln_1_b = GPT2Model::get_weight(&mut weights_for_block, &format!("h.0.ln_1.bias"), Some(&[n_embd])).unwrap().to_f16_tensor().unwrap();
+        let ln_2_g = GPT2Model::get_weight(&mut weights_for_block, &format!("h.0.ln_2.weight"), Some(&[n_embd])).unwrap().to_f16_tensor().unwrap();
+        let ln_2_b = GPT2Model::get_weight(&mut weights_for_block, &format!("h.0.ln_2.bias"), Some(&[n_embd])).unwrap().to_f16_tensor().unwrap();
 
         let block = Block::new(attn, mlp, ln_1_g, ln_1_b, ln_2_g, ln_2_b, &config); 
         assert!(block.is_ok());
