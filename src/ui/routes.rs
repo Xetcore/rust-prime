@@ -357,22 +357,31 @@ async fn process_single_file(
                 if let Some(model) = json_value.get("model") {
                     if let Some(vocab_value) = model.get("vocab") {
                         if let Some(vocab_map) = vocab_value.as_object() {
-                            let mut vocab_vec: Vec<(String, u32)> = vocab_map
+                            // For vocab preview (first N tokens)
+                            let mut vocab_preview_vec: Vec<(String, u32)> = vocab_map
                                 .iter()
                                 .filter_map(|(token, id_val)| {
                                     id_val.as_u64().map(|id| (token.clone(), id as u32))
                                 })
                                 .collect();
-
-                            vocab_vec.sort_by_key(|&(_, id)| id); // Sort by ID
-
-                            let vocab_preview_slice = vocab_vec
+                            vocab_preview_vec.sort_by_key(|&(_, id)| id);
+                            let vocab_preview_to_serialize = vocab_preview_vec
                                 .into_iter()
                                 .take(VOCAB_PREVIEW_COUNT)
                                 .collect::<Vec<(String, u32)>>();
-
-                            if let Ok(serialized_vocab_preview) = serde_json::to_string(&vocab_preview_slice) {
+                            if let Ok(serialized_vocab_preview) = serde_json::to_string(&vocab_preview_to_serialize) {
                                 tokenizer_details.insert("vocab_preview_json".to_string(), serialized_vocab_preview);
+                            }
+
+                            // For full vocabulary
+                            let full_vocab_map: HashMap<String, u32> = vocab_map
+                                .iter()
+                                .filter_map(|(token, id_val)| {
+                                    id_val.as_u64().map(|id| (token.clone(), id as u32))
+                                })
+                                .collect();
+                            if let Ok(serialized_full_vocab) = serde_json::to_string(&full_vocab_map) {
+                                tokenizer_details.insert("full_vocab_json".to_string(), serialized_full_vocab);
                             }
                         }
                     }
@@ -473,22 +482,27 @@ mod tests {
         assert!(body_str.contains("test_tokenizer")); // Check for part of the content preview
 
         // Check for data-vocab-preview attribute on the <pre> tag
-        let expected_vocab_preview_data = vec![
+        let vocab_map_for_preview = vec![
             ("<s>".to_string(), 0u32),
             ("<pad>".to_string(), 1u32),
             ("</s>".to_string(), 2u32),
             ("a".to_string(), 3u32),
             ("b".to_string(), 4u32),
         ];
-        let expected_vocab_json_string = serde_json::to_string(&expected_vocab_preview_data).unwrap();
-        let expected_attribute_string = format!("data-vocab-preview='{}'", html_escape::encode_double_quoted_attribute(&expected_vocab_json_string));
+        let expected_vocab_preview_json_string = serde_json::to_string(&vocab_map_for_preview).unwrap();
+        let expected_preview_attr_string = format!("data-vocab-preview='{}'", html_escape::encode_double_quoted_attribute(&expected_vocab_preview_json_string));
+        assert!(body_str.contains(&expected_preview_attr_string), "Expected vocab preview attribute not found or incorrect. Body: {}", body_str);
 
-        assert!(body_str.contains(&expected_attribute_string), "Expected vocab preview attribute not found or incorrect. Body: {}", body_str);
+        // Check for data-full-vocab-json attribute
+        let full_vocab_map_for_assert: HashMap<String, u32> = vocab_map_for_preview.into_iter().collect();
+        let expected_full_vocab_json_string = serde_json::to_string(&full_vocab_map_for_assert).unwrap();
+        let expected_full_attr_string = format!("data-full-vocab-json='{}'", html_escape::encode_double_quoted_attribute(&expected_full_vocab_json_string));
+        assert!(body_str.contains(&expected_full_attr_string), "Expected full vocab attribute not found or incorrect. Body: {}", body_str);
     }
 
     #[actix_rt::test]
     async fn test_upload_tokenizer_json_success_empty_vocab() {
-        let tokenizer_json_content = r#"{"name": "test_tokenizer_no_vocab", "model": {}}"#;
+        let tokenizer_json_content = r#"{"name": "test_tokenizer_no_vocab", "model": {}}"#; // No "vocab" field
         let payload = create_multipart_payload("tokenizer_no_vocab.json", tokenizer_json_content.as_bytes().to_vec());
 
         let resp = upload_files(payload).await.unwrap();
@@ -498,7 +512,8 @@ mod tests {
         let body_str = std::str::from_utf8(&body).unwrap();
 
         assert!(body_str.contains("<h3>tokenizer_no_vocab.json</h3>"));
-        assert!(!body_str.contains("data-vocab-preview="), "data-vocab-preview should not be present for empty/missing vocab. Body: {}", body_str);
+        assert!(!body_str.contains("data-vocab-preview="), "data-vocab-preview should not be present. Body: {}", body_str);
+        assert!(!body_str.contains("data-full-vocab-json="), "data-full-vocab-json should not be present. Body: {}", body_str);
     }
 
     #[actix_rt::test]
@@ -526,19 +541,39 @@ mod tests {
         let data_attr_end = "']"; // End of the JSON array within the attribute
         if let Some(start_idx) = body_str.find(data_attr_start) {
             let actual_attr_val_with_end = &body_str[start_idx + data_attr_start.len()..];
-            if let Some(end_idx) = actual_attr_val_with_end.find(data_attr_end) {
-                 let actual_json_str = &actual_attr_val_with_end[..end_idx + 1]; // Include the closing bracket
-                 let parsed_vocab: Vec<(String, u32)> = serde_json::from_str(actual_json_str).expect("Failed to parse vocab preview from HTML attribute");
-                 assert_eq!(parsed_vocab.len(), VOCAB_PREVIEW_COUNT, "Vocabulary preview should be truncated to VOCAB_PREVIEW_COUNT");
+            if let Some(end_idx) = actual_attr_val_with_end.find(data_attr_end) { // Find closing bracket of the array value
+                 let actual_json_str = &actual_attr_val_with_end[..end_idx + 1];
+                 let parsed_vocab_preview: Vec<(String, u32)> = serde_json::from_str(actual_json_str).expect("Failed to parse vocab preview from HTML attribute");
+                 assert_eq!(parsed_vocab_preview.len(), VOCAB_PREVIEW_COUNT, "Vocabulary preview should be truncated to VOCAB_PREVIEW_COUNT");
                  for i in 0..VOCAB_PREVIEW_COUNT {
-                     assert_eq!(parsed_vocab[i].0, format!("token{}", i));
-                     assert_eq!(parsed_vocab[i].1, i as u32);
+                     assert_eq!(parsed_vocab_preview[i].0, format!("token{}", i));
+                     assert_eq!(parsed_vocab_preview[i].1, i as u32);
                  }
             } else {
                 panic!("Could not find end of data-vocab-preview attribute value. Body: {}", body_str);
             }
         } else {
             panic!("data-vocab-preview attribute not found. Body: {}", body_str);
+        }
+
+        // Check full vocab
+        let full_data_attr_start = "data-full-vocab-json='{"; // Starts with object
+        let full_data_attr_end = "}'"; // End of the JSON object within the attribute
+         if let Some(start_idx) = body_str.find(full_data_attr_start) {
+            let actual_attr_val_with_end = &body_str[start_idx + full_data_attr_start.len() -1 ..]; // include the starting '{'
+            if let Some(end_idx) = actual_attr_val_with_end.find(full_data_attr_end) {
+                 let actual_json_str = &actual_attr_val_with_end[..end_idx + 1]; // Include the closing '}'
+                 let parsed_full_vocab: HashMap<String, u32> = serde_json::from_str(actual_json_str).expect("Failed to parse full vocab from HTML attribute");
+                 assert_eq!(parsed_full_vocab.len(), VOCAB_PREVIEW_COUNT + 5, "Full vocabulary should contain all items");
+                 for i in 0..(VOCAB_PREVIEW_COUNT + 5) {
+                     let token_name = format!("token{}", i);
+                     assert_eq!(parsed_full_vocab.get(&token_name), Some(&(i as u32)));
+                 }
+            } else {
+                panic!("Could not find end of data-full-vocab-json attribute value. Body: {}", body_str);
+            }
+        } else {
+            panic!("data-full-vocab-json attribute not found. Body: {}", body_str);
         }
     }
 

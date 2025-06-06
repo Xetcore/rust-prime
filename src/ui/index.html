@@ -49,80 +49,64 @@
         }
 
         /* Modal Styles */
-        /* The #tensorModal.modal class from Pico should handle basic modal layout.
-           These styles ensure it's a full overlay and provide some content styling. */
-        #tensorModal {
-          position: fixed; /* Stay in place */
-          z-index: 1000; /* Sit on top - Pico uses high z-indexes for modals too */
+        #tensorModal, #comparisonModal, #tokenizerComparisonModal { /* Apply common modal styles */
+          position: fixed;
+          z-index: 1000;
           left: 0;
           top: 0;
-          width: 100%; /* Full width */
-          height: 100%; /* Full height */
-          overflow: auto; /* Enable scroll if needed for the modal itself */
-          background-color: rgba(0,0,0,0.4); /* Black w/ opacity for backdrop */
-          /* display: none; is handled by inline style initially and JS */
+          width: 100%;
+          height: 100%;
+          overflow: auto;
+          background-color: rgba(0,0,0,0.4);
         }
 
-        /* PicoCSS styles 'article' within '.modal' for the modal dialog box.
-           We can adjust its default behavior if needed. */
-        #tensorModal article {
-          margin: 10% auto; /* More top margin for better centering */
-          padding: 20px;   /* Default Pico padding might be sufficient, this ensures it */
-          max-width: 700px; /* Increased max-width for potentially wider content */
-          border-radius: 8px; /* Optional: ensure rounded corners if not default */
+        #tensorModal article, #comparisonModal article, #tokenizerComparisonModal article {
+          margin: 10% auto;
+          padding: 20px;
+          border-radius: 8px;
         }
+        #tensorModal article { max-width: 700px; }
+        #comparisonModal article { max-width: 900px; }
+        #tokenizerComparisonModal article { max-width: 800px; } /* Adjust as needed */
 
-        #tensorModal article header {
-            display: flex; /* Allows aligning title and close button */
+        #tensorModal article header, #comparisonModal article header, #tokenizerComparisonModal article header {
+            display: flex;
             justify-content: space-between;
             align-items: center;
         }
 
-        #tensorModalContent h4 { /* Tensor Name */
-          margin-top: 0; /* Remove default top margin if it's the first element */
+        #tensorModalContent h4 {
+          margin-top: 0;
           margin-bottom: 1rem;
-          font-size: 1.5rem; /* Larger tensor name */
+          font-size: 1.5rem;
         }
 
         #tensorModalContent p {
-          margin-bottom: 0.75rem; /* Consistent spacing for p tags */
+          margin-bottom: 0.75rem;
           font-size: 1rem;
         }
         #tensorModalContent p strong {
-            color: var(--pico-secondary-foreground); /* Use Pico variable for emphasis */
+            color: var(--pico-secondary-foreground);
         }
 
-        #tensorModalContent pre { /* For data preview */
-          background-color: var(--pico-code-background); /* Use Pico variable */
-          border: 1px solid var(--pico-form-field-border-color); /* Use Pico variable */
-          padding: 15px; /* More padding */
-          overflow-x: auto; /* Allow horizontal scroll for long previews */
-          white-space: pre-wrap; /* Wrap lines but preserve formatting */
-          word-wrap: break-word; /* Break long words if necessary */
+        #tensorModalContent pre {
+          background-color: var(--pico-code-background);
+          border: 1px solid var(--pico-form-field-border-color);
+          padding: 15px;
+          overflow-x: auto;
+          white-space: pre-wrap;
+          word-wrap: break-word;
           border-radius: 4px;
-          max-height: 200px; /* Limit height and make scrollable if preview is very long */
+          max-height: 200px;
           font-size: 0.9em;
         }
 
-        /* Ensure close button is styled nicely by Pico.
-           The .close class from Pico should handle most of it.
-           We can add custom styles if needed for better positioning or appearance if it's not part of a <header>.
-           Pico's default .close is typically for <dialog> or specific components.
-           If the <a> tag with class "close" isn't styled as expected, we might need this: */
-        #tensorModalCloseButton {
+        #tensorModalCloseButton, #closeComparisonModalButton, #closeTokenizerComparisonModalButton {
             text-decoration: none;
-            font-size: 1.5rem; /* Make it a bit larger if needed */
-            /* Pico's default .close styling might already be good. */
-        }
-
-            /* Pico's default .close styling might already be good. */
+            font-size: 1.5rem;
         }
 
         /* Comparison Modal Specific Styles */
-        #comparisonModal article {
-          max-width: 900px; /* Wider for two columns */
-        }
-
         #comparisonGrid {
           display: grid;
           grid-template-columns: 1fr 1fr;
@@ -133,16 +117,21 @@
             border: 1px solid var(--pico-form-field-border-color, #ddd);
             padding: var(--pico-spacing, 1rem);
             border-radius: var(--pico-border-radius, 0.25rem);
-            background-color: var(--pico-card-background-color); /* Align with card background */
+            background-color: var(--pico-card-background-color);
         }
 
-        #tensorAComparisonArea h4, #tensorBComparisonArea h4 {
+        #tensorAComparisonArea h4, #tensorBComparisonArea h4, #comparisonResultArea h4,
+        #tokenizerAInfo h4, #tokenizerBInfo h4, #tokenizerComparisonResults h5 { /* Added tokenizer modal headers */
             margin-top: 0;
-            font-size: 1.2rem; /* Slightly smaller than modal title */
+            font-size: 1.2rem;
             border-bottom: 1px solid var(--pico-muted-border-color);
             padding-bottom: 0.5rem;
             margin-bottom: 1rem;
         }
+         #tokenizerComparisonResults h5 {
+            font-size: 1.1rem; /* Slightly smaller for sub-sections */
+         }
+
 
         #comparisonResultArea {
             margin-top: var(--pico-spacing, 1rem);
@@ -152,15 +141,6 @@
             background-color: var(--pico-card-background-color);
         }
 
-        #comparisonResultArea h4 {
-          margin-top: 0;
-          margin-bottom: 0.75rem;
-          font-size: 1.2rem;
-           border-bottom: 1px solid var(--pico-muted-border-color);
-            padding-bottom: 0.5rem;
-        }
-
-        /* Ensure consistent styling for <pre> tags in comparison view */
         #tensorAContent pre,
         #tensorBContent pre,
         #analysisContent pre {
@@ -181,18 +161,19 @@
             padding: 0.75rem;
             border: 1px solid var(--pico-muted-border-color);
             border-radius: var(--pico-border-radius);
-            background-color: var(--pico-card-sectionning-background-color); /* Slightly different background */
+            background-color: var(--pico-card-sectionning-background-color);
         }
-        .vocab-preview-container h4 {
+        .vocab-preview-container h4 { /* Specifically target h4 in vocab preview */
             font-size: 1rem;
             margin-top: 0;
             margin-bottom: 0.5rem;
+            border-bottom: none;
         }
         .vocab-preview-container ul {
             list-style-type: none;
             padding-left: 0;
             margin-bottom: 0;
-            max-height: 180px; /* Scrollable list for vocab */
+            max-height: 180px;
             overflow-y: auto;
             font-size: 0.85em;
         }
@@ -204,6 +185,28 @@
             padding: 0.1em 0.3em;
             border-radius: var(--pico-border-radius);
         }
+
+        /* Tokenizer Comparison Modal sections */
+        .comparison-section {
+            margin-bottom: 1rem;
+            max-height: 200px; /* Example max height */
+            overflow-y: auto;
+        }
+        .comparison-section ul {
+            list-style-type: none;
+            padding-left: 0;
+        }
+         .comparison-section li code {
+            background-color: var(--pico-code-background);
+            padding: 0.1em 0.3em;
+            border-radius: var(--pico-border-radius);
+        }
+        .comparison-section mark { /* For ID conflicts */
+            background-color: var(--pico-mark-background-color);
+            color: var(--pico-mark-color);
+            padding: 0.1em 0.2em;
+        }
+
     </style>
 </head>
 <body>
@@ -228,12 +231,14 @@
         <div id="compareButtonContainer" style="margin-top: 20px; text-align: center; display: none;">
              <button id="compareTensorsButton" role="button" disabled>Compare Selected Tensors (0)</button>
         </div>
+        <div id="compareTokenizersButtonContainer" style="margin-top: 10px; text-align: center; display: none;">
+            <button id="compareTokenizersButton" role="button" class="secondary" disabled>Compare Selected Tokenizers (0)</button>
+        </div>
 
-        <!-- Placeholder for Tensor Details Modal -->
+        <!-- Tensor Details Modal -->
         <div id="tensorModal" class="modal" style="display:none;">
             <article>
                 <header>
-                    <!-- Added an ID for easier selection -->
                     <a href="#close" aria-label="Close" class="close" id="tensorModalCloseButton"></a>
                     Tensor Details
                 </header>
@@ -243,7 +248,7 @@
             </article>
         </div>
 
-        <!-- Comparison Modal -->
+        <!-- Tensor Comparison Modal -->
         <div id="comparisonModal" class="modal" style="display:none;">
             <article>
                 <header>
@@ -266,31 +271,74 @@
                 </div>
             </article>
         </div>
+
+        <!-- Tokenizer Comparison Modal -->
+        <div id="tokenizerComparisonModal" class="modal" style="display:none;">
+            <article>
+                <header>
+                    <a href="#close" aria-label="Close" class="close" id="closeTokenizerComparisonModalButton"></a>
+                    Tokenizer Vocabulary Comparison
+                </header>
+                <div id="tokenizerAInfo"><h4>Tokenizer A: <span id="tokenizerAName"></span></h4><p>Vocabulary Size: <span id="tokenizerAVocabSize"></span></p></div>
+                <hr>
+                <div id="tokenizerBInfo" style="margin-top: 1rem;"><h4>Tokenizer B: <span id="tokenizerBName"></span></h4><p>Vocabulary Size: <span id="tokenizerBVocabSize"></span></p></div>
+                <hr>
+                <div id="tokenizerComparisonResults" style="margin-top: 1rem;">
+                    <h5>Common Tokens (<span id="commonTokenCount">0</span>)</h5><div id="commonTokens" class="comparison-section"></div>
+                    <h5>Unique to Tokenizer A (<span id="uniqueToACount">0</span>)</h5><div id="uniqueToA" class="comparison-section"></div>
+                    <h5>Unique to Tokenizer B (<span id="uniqueToBCount">0</span>)</h5><div id="uniqueToB" class="comparison-section"></div>
+                    <h5>ID Conflicts (<span id="idConflictCount">0</span>)</h5><div id="idConflicts" class="comparison-section"></div>
+                </div>
+            </article>
+        </div>
+
     </main>
 
     <script>
         // Get references to key DOM elements
         const uploadForm = document.getElementById('uploadForm');
-        const fileInput = document.getElementById('fileInput'); // Hidden file input
-        const dropZone = document.getElementById('dropZone');   // Visible drop zone area
-        const responseDisplay = document.getElementById('uploadResults'); // Div to show server responses
-        const uploadButton = document.getElementById('uploadButton'); // Submit button
+        const fileInput = document.getElementById('fileInput');
+        const dropZone = document.getElementById('dropZone');
+        const responseDisplay = document.getElementById('uploadResults');
+        const uploadButton = document.getElementById('uploadButton');
 
-        const tensorModal = document.getElementById('tensorModal'); // Modal element for single tensor details
-        const tensorModalContent = document.getElementById('tensorModalContent'); // Modal content area
-        const tensorModalCloseButton = document.getElementById('tensorModalCloseButton'); // Modal close button
+        const tensorModal = document.getElementById('tensorModal');
+        const tensorModalContent = document.getElementById('tensorModalContent');
+        const tensorModalCloseButton = document.getElementById('tensorModalCloseButton');
 
-        const compareButton = document.getElementById('compareTensorsButton'); // Compare button
-        const compareButtonContainer = document.getElementById('compareButtonContainer'); // Container for compare button
+        const compareTensorsButton = document.getElementById('compareTensorsButton');
+        const compareButtonContainer = document.getElementById('compareButtonContainer');
+        const compareTokenizersButton = document.getElementById('compareTokenizersButton');
+        const compareTokenizersButtonContainer = document.getElementById('compareTokenizersButtonContainer');
 
-        const comparisonModal = document.getElementById('comparisonModal'); // New comparison modal
-        const closeComparisonModalButton = document.getElementById('closeComparisonModalButton'); // Its close button
-        const tensorAContent = document.getElementById('tensorAContent'); // Area for Tensor A in comparison
-        const tensorBContent = document.getElementById('tensorBContent'); // Area for Tensor B in comparison
-        const analysisContent = document.getElementById('analysisContent'); // Area for comparison results
+        const tensorComparisonModal = document.getElementById('comparisonModal'); // Renamed for clarity
+        const closeTensorComparisonModalButton = document.getElementById('closeComparisonModalButton'); // Renamed for clarity
+        const tensorAContent = document.getElementById('tensorAContent');
+        const tensorBContent = document.getElementById('tensorBContent');
+        const analysisContent = document.getElementById('analysisContent');
+
+        // Tokenizer Comparison Modal Elements
+        const tokenizerComparisonModal = document.getElementById('tokenizerComparisonModal');
+        const closeTokenizerComparisonModalButton = document.getElementById('closeTokenizerComparisonModalButton');
+        const tokenizerAName = document.getElementById('tokenizerAName');
+        const tokenizerAVocabSize = document.getElementById('tokenizerAVocabSize');
+        const tokenizerBName = document.getElementById('tokenizerBName');
+        const tokenizerBVocabSize = document.getElementById('tokenizerBVocabSize');
+        const commonTokensDiv = document.getElementById('commonTokens');
+        const commonTokenCountSpan = document.getElementById('commonTokenCount');
+        const uniqueToADiv = document.getElementById('uniqueToA');
+        const uniqueToACountSpan = document.getElementById('uniqueToACount');
+        const uniqueToBDiv = document.getElementById('uniqueToB');
+        const uniqueToBCountSpan = document.getElementById('uniqueToBCount');
+        const idConflictsDiv = document.getElementById('idConflicts');
+        const idConflictCountSpan = document.getElementById('idConflictCount');
+
 
         // --- Helper Functions ---
         function escapeHtml(unsafe) {
+            if (typeof unsafe !== 'string') {
+                return String(unsafe); // Ensure it's a string before trying to replace
+            }
             return unsafe
                  .replace(/&/g, "&amp;")
                  .replace(/</g, "&lt;")
@@ -309,34 +357,20 @@
         }
 
         // --- Drag and Drop Event Handlers ---
-        function handleDropZoneClick() {
-            fileInput.click();
-        }
-
-        function handleDragOver(event) {
-            event.preventDefault(); // Necessary to allow dropping
-            dropZone.classList.add('dragover'); // Add class for styling (e.g., border change)
-        }
-
-        function handleDragLeave() {
-            dropZone.classList.remove('dragover');
-        }
-
+        function handleDropZoneClick() { fileInput.click(); }
+        function handleDragOver(event) { event.preventDefault(); dropZone.classList.add('dragover'); }
+        function handleDragLeave() { dropZone.classList.remove('dragover'); }
         function handleDrop(event) {
-            event.preventDefault(); // Prevent default browser behavior (e.g., opening the file)
-            dropZone.classList.remove('dragover'); // Remove visual feedback
-            const files = event.dataTransfer.files; // Get the dropped files
+            event.preventDefault();
+            dropZone.classList.remove('dragover');
+            const files = event.dataTransfer.files;
             if (files.length) {
-                fileInput.files = files; // Assign dropped files to the hidden file input
-                updateDropZoneText(files); // Update UI text
+                fileInput.files = files;
+                updateDropZoneText(files);
             }
         }
+        function handleFileInputChange() { updateDropZoneText(fileInput.files); }
 
-        function handleFileInputChange() {
-            updateDropZoneText(fileInput.files);
-        }
-
-        // Attach Drag and Drop Event Listeners
         dropZone.addEventListener('click', handleDropZoneClick);
         dropZone.addEventListener('dragover', handleDragOver);
         dropZone.addEventListener('dragleave', handleDragLeave);
@@ -345,74 +379,38 @@
 
         // --- Form Submission Handling ---
         async function handleFormSubmit(event) {
-            event.preventDefault(); // Prevent traditional form submission
-
-            // Client-side validation: Ensure at least one file is selected
+            event.preventDefault();
             if (fileInput.files.length === 0) {
                 responseDisplay.innerHTML = '<p class="error-message">Please select one or more files to upload.</p>';
                 return;
             }
-
-            // Create FormData object to send files
             const formData = new FormData();
-            for (const file of fileInput.files) {
-                formData.append('files', file); // "files" must match the name expected by the server
-            }
+            for (const file of fileInput.files) { formData.append('files', file); }
 
-            // --- Progress Indicators & UI State Changes ---
-            // Display spinner and loading message
             responseDisplay.innerHTML = '<div class="spinner"></div><p>Uploading and processing...</p>';
-            // Disable upload button to prevent multiple submissions
             uploadButton.disabled = true;
-            uploadButton.setAttribute('aria-busy', 'true'); // For Pico.CSS loading state
+            uploadButton.setAttribute('aria-busy', 'true');
 
             try {
-                // Asynchronously send the form data to the /upload endpoint
-                const response = await fetch('/upload', {
-                    method: 'POST',
-                    body: formData, // FormData is correctly handled by fetch for multipart/form-data
-                });
-
-                // Get the server's response as HTML text
+                const response = await fetch('/upload', { method: 'POST', body: formData });
                 const htmlData = await response.text();
-                // Display the server's HTML response (could be success info or error details)
                 responseDisplay.innerHTML = htmlData;
-
-                // After response is inserted, make tensor items clickable and set up compare logic
-                setupTensorInteraction();
-
+                setupFileInteractions();
                 if (!response.ok) {
-                    // Log a warning if the server response was not OK (e.g., 400, 500)
-                    // The displayed `htmlData` should already contain the server-formatted error.
                     console.warn('Server responded with an error status:', response.status, response.statusText);
                 }
             } catch (error) {
-                // Handle network errors or other issues with the fetch request
                 console.error('Error during upload:', error);
                 responseDisplay.innerHTML = `<p class="error-message">An unexpected error occurred: ${error.message}. Check the console for more details.</p>`;
             } finally {
-                // This block executes regardless of success or failure
-                // Re-enable the upload button and remove loading state
                 uploadButton.disabled = false;
                 uploadButton.removeAttribute('aria-busy');
             }
         }
         uploadForm.addEventListener('submit', handleFormSubmit);
 
-        // --- Tensor Click Handling ---
+        // --- Tensor Click Handling for Detail Modal ---
         function showTensorDetails(name, shape, dtype, preview) {
-            // For now, just log the details.
-            // In the next step, this will populate and show the modal.
-            console.log("Tensor Clicked:");
-            console.log("  Name:", name);
-            console.log("  Shape:", shape);
-            console.log("  DType:", dtype);
-            console.log("  Preview:", preview);
-
-            // Populate modal content
-            // Note: preview is already HTML-escaped by the backend for the data-attribute.
-            // Name, shape, dtype are also from data attributes or text content derived from server.
-            // If these could contain HTML special chars and weren't already handled, escapeHtml() would be needed here.
             tensorModalContent.innerHTML = `
                 <h4>${escapeHtml(name)}</h4>
                 <p><strong>Shape:</strong> ${escapeHtml(shape)}</p>
@@ -420,83 +418,103 @@
                 <p><strong>Preview:</strong></p>
                 <pre>${preview}</pre>
             `;
-            // Display the modal
             tensorModal.style.display = 'block';
-            // For PicoCSS, if using <dialog>, it would be: tensorModal.showModal(); or tensorModal.open = true;
-            // Since it's a div styled as modal, direct style change is fine.
         }
 
         function attachTensorClickListeners() {
-            const tensorListItems = responseDisplay.querySelectorAll('li[data-tensor-id]'); // Use data-tensor-id to identify tensor li
+            const tensorListItems = responseDisplay.querySelectorAll('li[data-tensor-id]');
             tensorListItems.forEach(li => {
-                // Make the tensor name part clickable (the text node before the first child like checkbox)
-                // or make the whole li clickable excluding the checkbox.
-                // For simplicity, making text part after checkbox clickable.
-                // We find the text node that contains the tensor name.
-                // The structure is <input type="checkbox"> TensorName: [Shape]
-                // So, the tensor name is part of the li's text content not wrapped in its own element.
-                // We can add a click listener to the `li` and check if the target was not the checkbox.
-
                 li.style.cursor = 'pointer';
                 li.addEventListener('click', function(event) {
-                    if (event.target.name === 'tensor_compare_select') {
-                        // Click was on checkbox, let checkbox handler deal with it.
-                        return;
-                    }
+                    if (event.target.name === 'tensor_compare_select') return;
                     event.preventDefault();
-
-                    const name = this.textContent.split(':')[0].trim().replace(/^.*?\}\s*/, ''); // More robust name extraction after checkbox
-                    const shape = this.dataset.shape;
-                    const dtype = this.dataset.dtype;
-                    const preview = this.dataset.preview;
-
-                    showTensorDetails(name, shape, dtype, preview);
+                    const nameElement = this.childNodes[1]; // Assuming checkbox is childNode[0], then text is childNode[1] or similar
+                    const name = nameElement ? nameElement.textContent.split(':')[0].trim() : "Unknown";
+                    showTensorDetails(name, this.dataset.shape, this.dataset.dtype, this.dataset.preview);
                 });
             });
         }
 
-        function updateCompareButtonState() {
+        // --- Tensor Comparison Checkbox Logic ---
+        function updateCompareTensorsButtonState() {
             const selectedCheckboxes = responseDisplay.querySelectorAll('input[name="tensor_compare_select"]:checked');
             const count = selectedCheckboxes.length;
-            compareButton.textContent = `Compare Selected Tensors (${count})`;
-            compareButton.disabled = count !== 2;
+            compareTensorsButton.textContent = `Compare Selected Tensors (${count})`;
+            compareTensorsButton.disabled = count !== 2;
         }
 
-        function attachCheckboxListeners() {
+        function attachTensorCheckboxListeners() {
             const checkboxes = responseDisplay.querySelectorAll('input[name="tensor_compare_select"]');
             if (checkboxes.length > 0) {
-                compareButtonContainer.style.display = 'block'; // Show compare button if there are tensors
+                compareButtonContainer.style.display = 'block';
             } else {
                 compareButtonContainer.style.display = 'none';
             }
-            checkboxes.forEach(checkbox => {
-                checkbox.addEventListener('change', updateCompareButtonState);
-            });
-            updateCompareButtonState(); // Initial state update
+            checkboxes.forEach(checkbox => checkbox.addEventListener('change', updateCompareTensorsButtonState));
+            updateCompareTensorsButtonState();
         }
 
-        function setupTensorInteraction() {
-            attachTensorClickListeners();
-            attachCheckboxListeners();
-            displayVocabularyPreviews(); // Call the new function here
+        // --- Tokenizer Comparison Checkbox Logic ---
+        function updateCompareTokenizersButtonState() {
+            const selectedCheckboxes = responseDisplay.querySelectorAll('input[name="tokenizer_compare_select"]:checked');
+            const count = selectedCheckboxes.length;
+            compareTokenizersButton.textContent = `Compare Selected Tokenizers (${count})`;
+            compareTokenizersButton.disabled = count !== 2;
+        }
+
+        function attachTokenizerCheckboxListeners() {
+            const tokenizerPreElements = responseDisplay.querySelectorAll('pre[data-full-vocab-json]');
+            let foundTokenizers = false;
+            tokenizerPreElements.forEach(preElement => {
+                foundTokenizers = true;
+                const fileInfoContainer = preElement.parentElement; // Assuming <pre> is direct child of the block for a tokenizer
+                let header = fileInfoContainer ? fileInfoContainer.querySelector('h3') : null;
+
+                if (header && !header.querySelector('input[name="tokenizer_compare_select"]')) {
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.name = 'tokenizer_compare_select';
+                    checkbox.value = header.textContent.trim();
+                    checkbox.style.marginRight = '10px';
+                    checkbox.style.verticalAlign = 'middle';
+
+                    header.insertBefore(checkbox, header.firstChild);
+                }
+                 // Add change listener to ALL checkboxes of this type after potential creation
+                const currentCheckboxes = fileInfoContainer.querySelectorAll('input[name="tokenizer_compare_select"]');
+                currentCheckboxes.forEach(cb => {
+                    // Remove existing listener to prevent duplicates if this function is called multiple times
+                    // This is a simple way; a more robust way would be to mark elements that have listeners.
+                    cb.removeEventListener('change', updateCompareTokenizersButtonState);
+                    cb.addEventListener('change', updateCompareTokenizersButtonState);
+                });
+
+            });
+
+            if (foundTokenizers) {
+                compareTokenizersButtonContainer.style.display = 'block';
+            } else {
+                compareTokenizersButtonContainer.style.display = 'none';
+            }
+            updateCompareTokenizersButtonState();
         }
 
         // --- Vocabulary Preview Display ---
         function displayVocabularyPreviews() {
             const tokenizerPreElements = responseDisplay.querySelectorAll('pre[data-vocab-preview]');
             tokenizerPreElements.forEach(preElement => {
+                if (preElement.nextElementSibling && preElement.nextElementSibling.classList.contains('vocab-preview-container')) {
+                    return;
+                }
                 const vocabJsonString = preElement.dataset.vocabPreview;
                 if (vocabJsonString) {
                     try {
                         const parsedVocab = JSON.parse(vocabJsonString);
                         if (Array.isArray(parsedVocab) && parsedVocab.length > 0) {
-                            let vocabHtml = `<div class="vocab-preview-container" style="margin-top: 1rem;"><h4>Vocabulary Preview (First ${parsedVocab.length} tokens):</h4><ul>`;
+                            let vocabHtml = `<div class="vocab-preview-container"><h4>Vocabulary Preview (First ${parsedVocab.length} tokens):</h4><ul>`;
                             parsedVocab.forEach(item => {
-                                // Ensure item is an array with two elements [token, id]
                                 if (Array.isArray(item) && item.length === 2) {
-                                    const token = item[0];
-                                    const id = item[1];
-                                    vocabHtml += `<li>Token: <code>${escapeHtml(String(token))}</code>, ID: ${id}</li>`;
+                                    vocabHtml += `<li>Token: <code>${escapeHtml(String(item[0]))}</code>, ID: ${item[1]}</li>`;
                                 }
                             });
                             vocabHtml += '</ul></div>';
@@ -504,174 +522,260 @@
                         }
                     } catch (error) {
                         console.error("Failed to parse vocab preview JSON:", error, "JSON string:", vocabJsonString);
-                        // Optionally, display a small error message next to the pre element
-                        // preElement.insertAdjacentHTML('afterend', '<p><small>Could not load vocabulary preview.</small></p>');
                     }
                 }
             });
         }
 
-        // --- Modal Close Functionality ---
-        tensorModalCloseButton.addEventListener('click', (event) => {
-            event.preventDefault();
-            tensorModal.style.display = 'none';
-        });
+        // --- Setup all interactions after results are rendered ---
+        function setupFileInteractions() {
+            attachTensorClickListeners();
+            attachTensorCheckboxListeners();
+            attachTokenizerCheckboxListeners();
+            displayVocabularyPreviews();
+        }
 
-        // Optional: Close modal if user clicks outside the modal content (on the backdrop)
-        // This requires the .modal class to be a full-screen overlay for this to work effectively.
-        // PicoCSS default modal might not behave like this out of the box if it's not a <dialog>.
-        tensorModal.addEventListener('click', (event) => {
-            if (event.target === tensorModal) { // Check if the click is directly on the modal backdrop
-                tensorModal.style.display = 'none';
-            }
-        });
+        // --- Modal Close Functionality (Common for all modals) ---
+        function closeModal(modalElement) {
+            if (modalElement) modalElement.style.display = 'none';
+        }
 
-        // Optional: Close modal with Escape key - Extended for both modals
+        tensorModalCloseButton.addEventListener('click', (event) => { event.preventDefault(); closeModal(tensorModal); });
+        tensorModal.addEventListener('click', (event) => { if (event.target === tensorModal) closeModal(tensorModal); });
+
+        closeTensorComparisonModalButton.addEventListener('click', (event) => { event.preventDefault(); closeModal(tensorComparisonModal); });
+        tensorComparisonModal.addEventListener('click', (event) => { if (event.target === tensorComparisonModal) closeModal(tensorComparisonModal); });
+
+        closeTokenizerComparisonModalButton.addEventListener('click', (event) => { event.preventDefault(); closeModal(tokenizerComparisonModal); });
+        tokenizerComparisonModal.addEventListener('click', (event) => { if (event.target === tokenizerComparisonModal) closeModal(tokenizerComparisonModal); });
+
+
         document.addEventListener('keydown', (event) => {
             if (event.key === 'Escape') {
-                if (tensorModal.style.display === 'block') {
-                    tensorModal.style.display = 'none';
-                }
-                if (comparisonModal.style.display === 'block') {
-                    comparisonModal.style.display = 'none';
-                }
+                if (tensorModal.style.display === 'block') closeModal(tensorModal);
+                if (tensorComparisonModal.style.display === 'block') closeModal(tensorComparisonModal);
+                if (tokenizerComparisonModal.style.display === 'block') closeModal(tokenizerComparisonModal);
             }
         });
 
-        // --- Comparison Modal Close Functionality ---
-        closeComparisonModalButton.addEventListener('click', (event) => {
-            event.preventDefault();
-            comparisonModal.style.display = 'none';
-        });
-
-        comparisonModal.addEventListener('click', (event) => {
-            if (event.target === comparisonModal) { // Click on backdrop
-                comparisonModal.style.display = 'none';
-            }
-        });
-
-        // --- Comparison Logic ---
+        // --- Tensor Comparison Logic ---
         function parsePreviewString(previewStr) {
             if (!previewStr || typeof previewStr !== 'string') return [];
-            // Remove brackets and "..."
             let content = previewStr.replace(/^\[|\]$/g, '').replace(/,\s*\.\.\.$/, '');
-            if (content === "") return []; // Handle empty preview after stripping
+            if (content === "") return [];
             return content.split(',').map(s => parseFloat(s.trim()));
         }
 
         function getTensorDataFromCheckbox(checkbox) {
             const parentLi = checkbox.closest('li[data-tensor-id]');
             if (!parentLi) return null;
-
-            const tensorId = parentLi.dataset.tensorId; // "filename::tensorname"
+            const tensorId = parentLi.dataset.tensorId;
             const parts = tensorId.split('::');
-            const filename = parts[0];
-            const tensorName = parts[1];
+            const nameElement = parentLi.childNodes[1]; // Assuming checkbox is node 0, then text is node 1
+            const name = nameElement ? nameElement.textContent.split(':')[0].trim() : (parts[1] || "Unknown");
 
             return {
-                id: tensorId,
-                name: tensorName,
-                filename: filename,
-                shape: parentLi.dataset.shape,
-                dtype: parentLi.dataset.dtype,
-                preview: parentLi.dataset.preview, // Raw preview string
-                previewArray: parsePreviewString(parentLi.dataset.preview) // Parsed numeric array
+                id: tensorId, name: name, filename: parts[0] || "Unknown File",
+                shape: parentLi.dataset.shape, dtype: parentLi.dataset.dtype,
+                preview: parentLi.dataset.preview,
+                previewArray: parsePreviewString(parentLi.dataset.preview)
             };
         }
 
-        compareButton.addEventListener('click', () => {
+        compareTensorsButton.addEventListener('click', () => {
             const selectedCheckboxes = responseDisplay.querySelectorAll('input[name="tensor_compare_select"]:checked');
-            if (selectedCheckboxes.length !== 2) {
-                // Should not happen if button is correctly enabled/disabled, but as a safeguard:
-                alert("Please select exactly two tensors to compare.");
-                return;
-            }
-
+            if (selectedCheckboxes.length !== 2) { alert("Please select exactly two tensors to compare."); return; }
             const tensorAData = getTensorDataFromCheckbox(selectedCheckboxes[0]);
             const tensorBData = getTensorDataFromCheckbox(selectedCheckboxes[1]);
+            if (!tensorAData || !tensorBData) { alert("Could not retrieve data for one or both selected tensors."); return; }
 
-            if (!tensorAData || !tensorBData) {
-                alert("Could not retrieve data for one or both selected tensors.");
-                return;
-            }
-
-            // Populate Tensor A & B details
-            // As with single tensor view, preview is pre-escaped. Other fields should be escaped.
             tensorAContent.innerHTML = `
                 <p><strong>Name:</strong> ${escapeHtml(tensorAData.name)}</p>
                 <p><strong>File:</strong> ${escapeHtml(tensorAData.filename)}</p>
                 <p><strong>Shape:</strong> ${escapeHtml(tensorAData.shape)}</p>
                 <p><strong>Data Type:</strong> ${escapeHtml(tensorAData.dtype)}</p>
-                <p><strong>Preview:</strong></p>
-                <pre>${tensorAData.preview}</pre>
-            `;
+                <p><strong>Preview:</strong></p><pre>${tensorAData.preview}</pre>`;
             tensorBContent.innerHTML = `
                 <p><strong>Name:</strong> ${escapeHtml(tensorBData.name)}</p>
                 <p><strong>File:</strong> ${escapeHtml(tensorBData.filename)}</p>
                 <p><strong>Shape:</strong> ${escapeHtml(tensorBData.shape)}</p>
                 <p><strong>Data Type:</strong> ${escapeHtml(tensorBData.dtype)}</p>
-                <p><strong>Preview:</strong></p>
-                <pre>${tensorBData.preview}</pre>
-            `;
+                <p><strong>Preview:</strong></p><pre>${tensorBData.preview}</pre>`;
 
-            // Comparison Analysis
             let analysisHTML = "";
             if (tensorAData.shape !== tensorBData.shape) {
-                analysisHTML += `<p class="error-message">Tensors have different shapes: ${tensorAData.shape} vs ${tensorBData.shape}.</p>`;
+                analysisHTML += `<p class="error-message">Tensors have different shapes: ${escapeHtml(tensorAData.shape)} vs ${escapeHtml(tensorBData.shape)}.</p>`;
             }
             if (tensorAData.dtype !== tensorBData.dtype) {
-                analysisHTML += `<p class="error-message">Tensors have different data types: ${tensorAData.dtype} vs ${tensorBData.dtype}.</p>`;
+                analysisHTML += `<p class="error-message">Tensors have different data types: ${escapeHtml(tensorAData.dtype)} vs ${escapeHtml(tensorBData.dtype)}.</p>`;
             }
 
             if (tensorAData.shape === tensorBData.shape && tensorAData.dtype === tensorBData.dtype) {
                 analysisHTML += `<p>Tensors have compatible shapes and data types.</p>`;
-                const previewA = tensorAData.previewArray;
-                const previewB = tensorBData.previewArray;
-
+                const previewA = tensorAData.previewArray; const previewB = tensorBData.previewArray;
                 if (previewA.length > 0 && previewB.length > 0) {
-                    let differences = [];
-                    let maxLength = Math.max(previewA.length, previewB.length);
-                    let previewsMatch = true; // Assume match until proven otherwise or limited by length
-
-                    // Determine common length for direct comparison
+                    let differences = [], maxLength = Math.max(previewA.length, previewB.length), previewsMatch = true;
                     let commonLength = Math.min(previewA.length, previewB.length);
-
                     for (let i = 0; i < commonLength; i++) {
-                        const valA = previewA[i];
-                        const valB = previewB[i];
-                        differences.push((valA - valB).toPrecision(4));
-                        if (Math.abs(valA - valB) > 1e-6) { // Tolerance for float comparison
-                            previewsMatch = false;
-                        }
+                        differences.push((previewA[i] - previewB[i]).toPrecision(4));
+                        if (Math.abs(previewA[i] - previewB[i]) > 1e-6) previewsMatch = false;
                     }
-
-                    // If lengths are different, mark as not fully matching and add N/A for remaining elements
                     if (previewA.length !== previewB.length) {
                         previewsMatch = false;
-                        for (let i = commonLength; i < maxLength; i++) {
-                            differences.push('N/A');
-                        }
+                        for (let i = commonLength; i < maxLength; i++) differences.push('N/A');
                     }
-
                     analysisHTML += `<p><strong>Preview Differences (A - B):</strong> <pre>[${escapeHtml(differences.join(', '))}]</pre></p>`;
-
                     if (previewsMatch && !(tensorAData.preview.includes("...") || tensorBData.preview.includes("..."))) {
                          analysisHTML += `<p>Previews are numerically identical based on available data.</p>`;
                     } else if (tensorAData.preview.includes("...") || tensorBData.preview.includes("...")) {
                         analysisHTML += `<p>Note: Preview comparison is limited due to truncated data ("..."). Differences shown are for available elements.</p>`;
-                    } else if (!previewsMatch) { // Different lengths or different values
+                    } else if (!previewsMatch) {
                         analysisHTML += `<p>Previews show numerical differences or have different lengths.</p>`;
                     }
-                } else {
-                    analysisHTML += `<p>Preview data not available or empty for one or both tensors; cannot compare numerically.</p>`;
-                }
+                } else { analysisHTML += `<p>Preview data not available or empty for one or both tensors; cannot compare numerically.</p>`; }
+            } else { analysisHTML += `<p>Cannot perform numerical comparison due to incompatible shapes or data types.</p>`; }
+
+            analysisContent.innerHTML = analysisHTML;
+            tensorComparisonModal.style.display = 'block'; // Ensure correct modal is shown
+        });
+
+        // --- Tokenizer Comparison Logic ---
+        function displayTokenList(element, tokens, displayId = true, idFieldA = 'id', idFieldB = null) {
+            let html = '';
+            if (tokens.length > 0) {
+                html += '<ul>';
+                tokens.forEach(item => {
+                    html += `<li><code>${escapeHtml(item.token)}</code>`;
+                    if (displayId) {
+                        html += ` (ID: ${item[idFieldA]}`;
+                        if (idFieldB && item[idFieldB] !== undefined) {
+                             html += `, ID B: ${item[idFieldB]}`;
+                             if (item[idFieldA] !== item[idFieldB]) {
+                                 html += ` <mark>Conflict!</mark>`;
+                             }
+                        }
+                        html += `)`;
+                    }
+                    html += '</li>';
+                });
+                html += '</ul>';
             } else {
-                 // This part is already fine, but ensure error messages are also escaped if they could contain user input (not the case here)
-                 analysisHTML += `<p>Cannot perform numerical comparison due to incompatible shapes or data types.</p>`;
+                html += '<p>None</p>';
+            }
+            element.innerHTML = html;
+        }
+
+        compareTokenizersButton.addEventListener('click', () => {
+            const selectedCheckboxes = responseDisplay.querySelectorAll('input[name="tokenizer_compare_select"]:checked');
+            if (selectedCheckboxes.length !== 2) {
+                alert("Please select exactly two tokenizers to compare.");
+                return;
             }
 
-            analysisContent.innerHTML = analysisHTML; // analysisHTML is constructed with <p> and <pre> which are safe
-            comparisonModal.style.display = 'block';
+            const tokenizerData = [];
+            selectedCheckboxes.forEach(cb => {
+                let preElement = null;
+                const h3 = cb.closest('h3');
+                if (h3 && h3.parentElement) {
+                    // Try to find the <pre> tag that is a sibling to the <h3> or within the same overall file block
+                    let currentElement = h3.nextElementSibling;
+                     while(currentElement) {
+                        if (currentElement.tagName === 'PRE' && currentElement.dataset.fullVocabJson) {
+                            preElement = currentElement;
+                            break;
+                        }
+                        // Also check if it's wrapped in vocab-preview-container's sibling (if pre is first)
+                        if (currentElement.classList && currentElement.classList.contains('vocab-preview-container')) {
+                           let potentialPre = currentElement.previousElementSibling;
+                           if(potentialPre && potentialPre.tagName === 'PRE' && potentialPre.dataset.fullVocabJson) {
+                               preElement = potentialPre;
+                               break;
+                           }
+                        }
+                        currentElement = currentElement.nextElementSibling;
+                    }
+                     // If not found as a sibling, maybe it's a child of h3's parent, after h3
+                    if (!preElement && h3.parentElement) {
+                        let parentChildren = Array.from(h3.parentElement.children);
+                        let h3Index = parentChildren.indexOf(h3);
+                        for(let i = h3Index + 1; i < parentChildren.length; i++) {
+                            if(parentChildren[i].tagName === 'PRE' && parentChildren[i].dataset.fullVocabJson) {
+                                preElement = parentChildren[i];
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (preElement && preElement.dataset.fullVocabJson) {
+                    try {
+                        const fullVocabMap = new Map(Object.entries(JSON.parse(preElement.dataset.fullVocabJson)));
+                        tokenizerData.push({
+                            name: cb.value,
+                            vocab: fullVocabMap,
+                            size: fullVocabMap.size
+                        });
+                    } catch (e) {
+                        console.error("Failed to parse full_vocab_json for", cb.value, e);
+                        tokenizerData.push({ name: cb.value, vocab: new Map(), size: 0, error: true });
+                    }
+                } else {
+                     tokenizerData.push({ name: cb.value, vocab: new Map(), size: 0, error: true });
+                     console.error("Could not find pre element with full_vocab_json for tokenizer:", cb.value);
+                }
+            });
+
+            if (tokenizerData.some(d => d.error) || tokenizerData.length < 2) {
+                alert("Could not retrieve vocabulary data for one or both selected tokenizers. Check console.");
+                return;
+            }
+
+            const [dataA, dataB] = tokenizerData;
+
+            tokenizerAName.textContent = escapeHtml(dataA.name);
+            tokenizerAVocabSize.textContent = dataA.size;
+            tokenizerBName.textContent = escapeHtml(dataB.name);
+            tokenizerBVocabSize.textContent = dataB.size;
+
+            const common = [];
+            const uniqueA = [];
+            const conflicts = [];
+
+            dataA.vocab.forEach((idA, tokenA) => {
+                if (dataB.vocab.has(tokenA)) {
+                    const idB = dataB.vocab.get(tokenA);
+                    common.push({ token: tokenA, idA: idA, idB: idB });
+                    if (idA !== idB) {
+                        conflicts.push({ token: tokenA, idA: idA, idB: idB });
+                    }
+                } else {
+                    uniqueA.push({ token: tokenA, id: idA });
+                }
+            });
+
+            const uniqueB = [];
+            dataB.vocab.forEach((idB, tokenB) => {
+                if (!dataA.vocab.has(tokenB)) {
+                    uniqueB.push({ token: tokenB, id: idB });
+                }
+            });
+
+            common.sort((x,y) => x.token.localeCompare(y.token));
+            uniqueA.sort((x,y) => x.token.localeCompare(y.token));
+            uniqueB.sort((x,y) => x.token.localeCompare(y.token));
+            conflicts.sort((x,y) => x.token.localeCompare(y.token));
+
+            commonTokenCountSpan.textContent = common.length;
+            uniqueToACountSpan.textContent = uniqueA.length;
+            uniqueToBCountSpan.textContent = uniqueB.length;
+            idConflictCountSpan.textContent = conflicts.length;
+
+            displayTokenList(commonTokensDiv, common, true, 'idA', 'idB');
+            displayTokenList(uniqueToADiv, uniqueA);
+            displayTokenList(uniqueToBDiv, uniqueB);
+            displayTokenList(idConflictsDiv, conflicts, true, 'idA', 'idB');
+
+            tokenizerComparisonModal.style.display = 'block';
         });
     </script>
 </body>
