@@ -650,7 +650,7 @@ mod tests {
             let logits_3d_s1 = ArrayD::from_shape_vec(IxDyn(&[1, 1, 5]), vec![1.0, 2.0, 3.0, 4.0, 5.0]).unwrap();
             let slice_3d_s1 = get_last_token_logits_slice(&logits_3d_s1).unwrap();
             assert_eq!(slice_3d_s1.to_vec(), vec![1.0, 2.0, 3.0, 4.0, 5.0]);
-            
+
             // Case 3: 3D tensor (batch=1, seq=3, vocab_size=2)
             // Logits: [[[1,2], [3,4], [5,6]]]
             let logits_3d_s3 = ArrayD::from_shape_vec(IxDyn(&[1, 3, 2]), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();

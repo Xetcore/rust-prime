@@ -1,0 +1,13 @@
+[package]
+name = "tensor_core_optimized"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libm = "0.2.8"
+half = { version = "2.2.1", features = ["num-traits", "serde"] }
+num-traits = "0.2.15"
+
+[dev-dependencies]
+rand = "0.8"
+approx = "0.5"

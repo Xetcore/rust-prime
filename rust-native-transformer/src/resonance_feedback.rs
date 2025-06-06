@@ -93,7 +93,6 @@ impl ResonanceFeedbackStore {
     }
 }
 
-/*
 // Unit tests
 #[cfg(test)]
 mod tests {
@@ -241,4 +240,3 @@ mod tests {
         assert_eq!(loaded_entry2.validation_status, ValidationStatus::Unvalidated);
     }
 }
-*/

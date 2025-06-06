@@ -25,7 +25,7 @@ pub trait ExpertTagged {
 }
 
 // Import Expert trait for type constraint in filter_experts_by_tier
-use crate::moe::Expert; 
+use crate::moe::Expert;
 
 /// Filters a list of scored experts based on allowed cache tiers.
 ///
@@ -84,7 +84,7 @@ mod tests {
     // Assuming MLPExpert and SymbolicExpert are accessible for testing via crate::moe
     // and implement Expert + ExpertTagged.
     // Their `new` methods also need to be public.
-    use crate::moe::{Expert, MLPExpert, SymbolicExpert}; 
+    use crate::moe::{Expert, MLPExpert, SymbolicExpert};
 
 
     #[test]

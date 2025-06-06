@@ -1,0 +1,19 @@
+[package]
+name = "tensor_core_optimized"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+libm = "0.2.8"
+half = "2.2.1"
+
+[dev-dependencies]
+rand = "0.8"
+approx = "0.5"
+# FLOAT_TOLERANCE in tests might need approx if not already using it,
+# or if direct float comparison needs more robust handling.
+# For now, assuming existing test structure is fine.
+# If tests are copied verbatim and used `assert_eq` for floats, they might become flaky.
+# The existing `assert_f32_slice_eq` and `assert_tensors_approx_equal` use a manual tolerance.

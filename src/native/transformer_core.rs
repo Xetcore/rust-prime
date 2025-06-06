@@ -2,6 +2,11 @@
 
 use crate::tensor_engine::{Tensor, TensorError};
 use std::collections::HashMap;
+use rayon::prelude::*;
+use std::sync::Arc;
+
+// 0. Basic Setup
+#[derive(Debug)]
 use std::sync::Arc;
 
 // 0. Basic Setup
@@ -400,46 +405,67 @@ impl MultiHeadAttention {
 
         let mut k_for_attention_all_heads: Tensor<f32>;
         let mut v_for_attention_all_heads: Tensor<f32>;
-        let mut effective_kv_seq_len = current_seq_len; 
+        let mut effective_kv_seq_len = current_seq_len;
 
         if let Some(layer_cache_mut) = cache {
-            let mut temp_k_list = Vec::with_capacity(n_head);
-            let mut temp_v_list = Vec::with_capacity(n_head);
-            
-            while layer_cache_mut.len() < n_head { // Ensure cache is initialized for all heads
-                 layer_cache_mut.push(KVCacheEntry { 
-                    key: Tensor::new(Vec::new(), vec![batch_size, 0, head_dim])?, 
-                    value: Tensor::new(Vec::new(), vec![batch_size, 0, head_dim])? 
+            // Sequential Initialization: Ensure cache structure is ready for all heads.
+            // This must run before parallel operations on the cache.
+            while layer_cache_mut.len() < n_head {
+                layer_cache_mut.push(KVCacheEntry {
+                    key: Tensor::new(Vec::new(), vec![batch_size, 0, head_dim])?,
+                    value: Tensor::new(Vec::new(), vec![batch_size, 0, head_dim])?,
                 });
             }
+
+            // Create an immutable snapshot of the previous K/V states for parallel processing.
+            let previous_kv_state: Vec<(Tensor<f32>, Tensor<f32>)> = layer_cache_mut
+                .iter()
+                .map(|entry| (entry.key.clone(), entry.value.clone()))
+                .collect();
+
+            // Parallel Computation of New K/V Pairs
+            let computed_kv_updates: Result<Vec<(Tensor<f32>, Tensor<f32>)>, TransformerError> =
+                (0..n_head).into_par_iter().map(|h_idx| {
+                    let k_current_this_head = k_heads_current.slice_one_head_all_batches(h_idx)?;
+                    let v_current_this_head = v_heads_current.slice_one_head_all_batches(h_idx)?;
+
+                    // Access the previous state for this head from the snapshot
+                    let (prev_k_this_head, prev_v_this_head) = &previous_kv_state[h_idx];
+
+                    let k_to_cache = if prev_k_this_head.shape[1] == 0 {
+                        k_current_this_head // No need to clone if it's the first entry
+                    } else {
+                        Tensor::concat(&[prev_k_this_head, &k_current_this_head], 1)?
+                    };
+                    let v_to_cache = if prev_v_this_head.shape[1] == 0 {
+                        v_current_this_head // No need to clone
+                    } else {
+                        Tensor::concat(&[prev_v_this_head, &v_current_this_head], 1)?
+                    };
+                    Ok((k_to_cache, v_to_cache))
+                }).collect();
             
+            let computed_kv_updates = computed_kv_updates?;
+
+            // Sequential Update of LayerKVCache
+            let mut temp_k_list = Vec::with_capacity(n_head);
+            let mut temp_v_list = Vec::with_capacity(n_head);
+
             for h_idx in 0..n_head {
-                let k_current_this_head = k_heads_current.slice_one_head_all_batches(h_idx)?; 
-                let v_current_this_head = v_heads_current.slice_one_head_all_batches(h_idx)?;
+                // Directly move computed tensors if possible, or clone if ownership rules require.
+                // Assuming computed_kv_updates owns the tensors.
+                layer_cache_mut[h_idx].key = computed_kv_updates[h_idx].0.clone(); // Clone if multiple uses, or if not owning
+                layer_cache_mut[h_idx].value = computed_kv_updates[h_idx].1.clone();
 
-                let cache_entry = &mut layer_cache_mut[h_idx];
-                
-                let k_to_cache = if cache_entry.key.shape[1] == 0 { 
-                    k_current_this_head.clone()
-                } else {
-                    Tensor::concat(&[&cache_entry.key, &k_current_this_head], 1)? 
-                };
-                let v_to_cache = if cache_entry.value.shape[1] == 0 {
-                    v_current_this_head.clone()
-                } else {
-                    Tensor::concat(&[&cache_entry.value, &v_current_this_head], 1)?
-                };
-                
-                cache_entry.key = k_to_cache;
-                cache_entry.value = v_to_cache;
-
-                temp_k_list.push(cache_entry.key.clone());
-                temp_v_list.push(cache_entry.value.clone());
+                temp_k_list.push(layer_cache_mut[h_idx].key.clone());
+                temp_v_list.push(layer_cache_mut[h_idx].value.clone());
             }
-            k_for_attention_all_heads = Tensor::stack_heads_from_list(&temp_k_list)?; 
+
+            k_for_attention_all_heads = Tensor::stack_heads_from_list(&temp_k_list)?;
             v_for_attention_all_heads = Tensor::stack_heads_from_list(&temp_v_list)?;
+
             if !temp_k_list.is_empty() {
-                effective_kv_seq_len = temp_k_list[0].shape[1]; 
+                effective_kv_seq_len = temp_k_list[0].shape[1];
             }
 
         } else {
@@ -449,23 +475,40 @@ impl MultiHeadAttention {
         
         let k_t_final = k_for_attention_all_heads.permute_mha_kt()?;
         
-        let mut att_scores_parts = Vec::with_capacity(batch_size * n_head);
         let scale = (head_dim as f32).sqrt();
+        let inv_scale = 1.0 / scale; // Precompute for multiplication if preferred
 
-        for b_idx in 0..batch_size {
-            for h_idx in 0..n_head {
-                let q_slice = q_heads.slice_mha(b_idx, h_idx)?; 
-                let k_t_slice = k_t_final.slice_mha_for_kv(b_idx, h_idx, effective_kv_seq_len)?; 
-                
-                let mut scores_s = Tensor::matmul(&q_slice, &k_t_slice)?; 
-                for val in scores_s.data.iter_mut() {
-                    *val /= scale;
-                }
-                att_scores_parts.push(scores_s);
-            }
+        // Parallel computation of attention scores
+        let att_scores_results: Result<Vec<Tensor<f32>>, TransformerError> = (0..batch_size)
+            .into_par_iter()
+            .flat_map(|b_idx| {
+                (0..n_head).into_par_iter().map(move |h_idx| {
+                    let q_slice = q_heads.slice_mha(b_idx, h_idx)?;
+                    let k_t_slice = k_t_final.slice_mha_for_kv(b_idx, h_idx, effective_kv_seq_len)?;
+
+                    let mut scores_s = Tensor::matmul(&q_slice, &k_t_slice)?;
+
+                    // Scale the scores
+                    // Using scalar_mul would be cleaner if it's confirmed to be efficient
+                    // or if this loop becomes a bottleneck later.
+                    for val in scores_s.data.iter_mut() {
+                        *val *= inv_scale; // Use multiplication by inverse for potential minor perf gain
+                    }
+                    Ok(scores_s)
+                })
+            })
+            .collect();
+
+        let att_scores_parts = att_scores_results?;
+
+        // Assemble att_scores tensor (sequential)
+        // Calculate expected capacity for att_scores_data_flat
+        let expected_capacity = batch_size * n_head * current_seq_len * effective_kv_seq_len;
+        let mut att_scores_data_flat = Vec::with_capacity(expected_capacity);
+        for t in att_scores_parts { // att_scores_parts is Vec<Tensor<f32>>
+            att_scores_data_flat.extend(t.data);
         }
-        let mut att_scores_data_flat = Vec::new();
-        for t in att_scores_parts { att_scores_data_flat.extend(t.data); }
+
         let mut att_scores = Tensor::new(att_scores_data_flat, vec![batch_size, n_head, current_seq_len, effective_kv_seq_len])?;
 
         if let Some(th_value) = theta_hat {
@@ -506,21 +549,31 @@ impl MultiHeadAttention {
             }
         }
 
-        let att_probs = tensor_ops::softmax(&att_scores, 3)?; 
+        let att_probs = tensor_ops::softmax(&att_scores, 3)?;
 
-        let mut out_att_parts = Vec::with_capacity(batch_size * n_head);
-        for b_idx in 0..batch_size {
-            for h_idx in 0..n_head {
-                let probs_slice = att_probs.slice_mha_custom(b_idx, h_idx, current_seq_len, effective_kv_seq_len)?; 
-                let v_slice = v_for_attention_all_heads.slice_mha_for_kv(b_idx, h_idx, effective_kv_seq_len)?; 
-                out_att_parts.push(Tensor::matmul(&probs_slice, &v_slice)?); 
-            }
+        // Parallel computation of output attention values (AttnProbs @ V)
+        let out_att_results: Result<Vec<Tensor<f32>>, TransformerError> = (0..batch_size)
+            .into_par_iter()
+            .flat_map(|b_idx| {
+                (0..n_head).into_par_iter().map(move |h_idx| {
+                    let probs_slice = att_probs.slice_mha_custom(b_idx, h_idx, current_seq_len, effective_kv_seq_len)?;
+                    let v_slice = v_for_attention_all_heads.slice_mha_for_kv(b_idx, h_idx, effective_kv_seq_len)?;
+                    Tensor::matmul(&probs_slice, &v_slice)
+                })
+            })
+            .collect();
+
+        let out_att_parts = out_att_results?;
+
+        // Assemble out_att tensor (sequential)
+        let expected_out_capacity = batch_size * n_head * current_seq_len * head_dim;
+        let mut out_att_data_flat = Vec::with_capacity(expected_out_capacity);
+        for t in out_att_parts { // out_att_parts is Vec<Tensor<f32>>
+            out_att_data_flat.extend(t.data);
         }
-        let mut out_att_data_flat = Vec::new();
-        for t in out_att_parts { out_att_data_flat.extend(t.data); }
         let out_att = Tensor::new(out_att_data_flat, vec![batch_size, n_head, current_seq_len, head_dim])?;
         
-        let out_reshaped = out_att.permute_mha_output()? 
+        let out_reshaped = out_att.permute_mha_output()?
                                   .reshape(vec![batch_size, current_seq_len, n_embd])?;
         
         let final_output = tensor_ops::linear(&out_reshaped, &self.c_proj_w, Some(&self.c_proj_b))?;

@@ -54,7 +54,7 @@ For more details on the `rust-native-transformer` CLI features, see its dedicate
 │       ├── lib.rs                  # Library entry point for `rust-native-transformer` components
 │       ├── main.rs                 # CLI entry point
 │       ├── model_loader.rs         # Logic for loading `.safetensors` model weights
-│       ├── resonance_feedback.rs   # Experimental feature for attention mechanism
+│       ├── resonance_feedback.rs   # System for collecting and storing user feedback on model generations
 │       ├── runtime_interface.rs    # CLI argument parsing and runtime setup
 │       ├── tensor_engine.rs        # Custom tensor operations
 │       ├── text_generator.rs       # Text generation logic (e.g., greedy decoding)

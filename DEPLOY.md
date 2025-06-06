@@ -83,7 +83,6 @@ Here's an example command:
     --model-path ./models/your_model.safetensors \
     --vocab-path ../resources/tokenizer_data/gpt2/gpt2-vocab.json \
     --merges-path ../resources/tokenizer_data/gpt2/merges.txt \
-    --config-path ../resources/config/gpt2/config.json \
     --prompt "Hello, world! This is a test prompt." \
     --max-length 50 \
     --config-n-layer 12 \
@@ -96,7 +95,8 @@ Here's an example command:
 
 **Important**:
 *   Replace `./models/your_model.safetensors` with the actual path to your model file.
-*   The paths to `vocab-path`, `merges-path`, and `config-path` are relative to the `rust-native-transformer` directory, assuming the `resources` directory is at the repository root.
+*   The paths to `vocab-path` and `merges-path` are relative to the `rust-native-transformer` directory, assuming the `resources` directory is at the repository root.
+*   The model configuration parameters (`--config-n-layer`, `--config-n-head`, etc.) must be set directly on the command line and should match the architecture of the specific GPT-2 variant you are using. The example values are for the standard 'gpt2' base model. You can refer to the `resources/config/gpt2/config.json` file for typical values for different GPT-2 model sizes, but this file is **not** directly loaded by the CLI.
 *   **Adjust Model Configuration Parameters**: The `--config-n-layer`, `--config-n-head`, etc., parameters **must match** the architecture of the specific GPT-2 variant you are using (e.g., 'gpt2', 'gpt2-medium'). The example values are for the standard 'gpt2' base model. Refer to the model's configuration (often a `config.json` file) on Hugging Face Hub for the correct values.
 
 ## 7. Troubleshooting/Notes

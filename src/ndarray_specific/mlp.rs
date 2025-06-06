@@ -255,7 +255,7 @@ mod tests {
         let output_tensor = result.unwrap();
         assert_eq!(output_tensor.shape(), &[seq_len, n_embd], "Output shape mismatch for 2D input.");
         assert_eq!(output_tensor.device(), Device::CPU, "Output device mismatch for 2D input.");
-        
+
         // Verify some output values. Since weights are 0, and bias is 0,
         // output of first linear is 0. GELU(0) is 0. Output of second linear is 0.
         let output_slice = output_tensor.as_slice().unwrap();

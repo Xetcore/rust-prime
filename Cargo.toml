@@ -7,22 +7,10 @@ edition = "2021"
 
 [dependencies]
 tokenizers = "0.15.0"
-feat/gpt2-core-logic-and-weights
-ndarray = "0.15.6"
-serde = { version = "1.0.190", features = ["derive"] }
-serde_json = "1.0.108"
-safetensors = "0.4.0"
-clap = { version = "4.4.8", features = ["derive"] }
-
-[dev-dependencies]
-approx = "0.5"
-=======
 ndarray = { version = "0.15.6", optional = true }
 serde = { version = "1.0.190", features = ["derive"] }
 serde_json = "1.0.108"
-
 safetensors = "0.5.0"
-main
 clap = { version = "4.4.8", features = ["derive"] }
 ndarray-stats = { version = "0.5.1", optional = true } # Added for GatingLayer (QuantileExt, etc.)
 sysinfo = "0.29.0" # Added for system monitoring
@@ -44,6 +32,6 @@ path = "src/bin/experimental_repl.rs"
 required-features = ["ndarray_backend"]
 
 [dev-dependencies]
+approx = "0.5"
 tempfile = "3.3.0"
 proptest = "1.0"
-main

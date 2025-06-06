@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Default)]
 pub struct GPT2Config {
     pub vocab_size: i32,
     #[serde(alias = "max_position_embeddings")]

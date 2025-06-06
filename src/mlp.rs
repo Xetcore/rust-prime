@@ -1,4 +1,4 @@
-use ndarray::{Array, ArrayD, Ix1, Ix2, ShapeError};
+use ndarray::{arr0, s, Array, ArrayD, Ix1, Ix2, IxDyn, ShapeError}; // Added arr0, s, IxDyn
 use std::error::Error;
 use std::f32::consts::PI;
 
@@ -14,8 +14,8 @@ fn gelu(x: &ArrayD<f32>) -> ArrayD<f32> {
 
 #[derive(Debug)]
 pub struct MLP {
-    pub(crate) n_embd: i32, // Made pub(crate) for consistency if needed, though not directly set by loader
-    pub(crate) n_inner: i32,// Made pub(crate) for consistency if needed, though not directly set by loader
+    pub(crate) n_embd: i32,
+    pub(crate) n_inner: i32,
     pub(crate) c_fc_w: ArrayD<f32>,   // Shape: [n_embd, n_inner]
     pub(crate) c_fc_b: ArrayD<f32>,   // Shape: [n_inner]
     pub(crate) c_proj_w: ArrayD<f32>, // Shape: [n_inner, n_embd]
@@ -23,8 +23,10 @@ pub struct MLP {
 }
 
 impl MLP {
-feat/gpt2-core-logic-and-weights
     pub fn new(n_embd: i32, n_inner: i32) -> Result<Self, Box<dyn Error>> {
+        if n_embd <= 0 || n_inner <= 0 {
+            return Err("n_embd and n_inner must be positive".into());
+        }
         let c_fc_w = Array::zeros((n_embd as usize, n_inner as usize)).into_dyn();
         let c_fc_b = Array::zeros((n_inner as usize,)).into_dyn();
         let c_proj_w = Array::zeros((n_inner as usize, n_embd as usize)).into_dyn();
@@ -51,6 +53,14 @@ feat/gpt2-core-logic-and-weights
         }
         let batch_size = initial_shape[0];
         let seq_len = initial_shape[1];
+        let n_embd_input = initial_shape[2];
+
+        if n_embd_input != self.n_embd as usize {
+            return Err(format!(
+                "Input embedding dimension ({}) does not match model n_embd ({})",
+                n_embd_input, self.n_embd
+            ).into());
+        }
 
         // Reshape hidden_states for matrix multiplication: [B, S, E] -> [B*S, E]
         let reshaped_hs = hidden_states
@@ -84,59 +94,13 @@ feat/gpt2-core-logic-and-weights
             .into_dyn(); // Convert to ArrayD for the final output type
 
         Ok(output)
-=======
-    pub fn new(
-        n_embd: i32, 
-        n_inner: i32 
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        if n_embd <= 0 || n_inner <= 0 {
-            return Err("n_embd and n_inner must be positive".into());
-        }
-        // c_fc_weight shape: [n_embd, n_inner]
-        // c_fc_bias shape: [n_inner]
-        // c_proj_weight shape: [n_inner, n_embd]
-        // c_proj_bias shape: [n_embd]
-        let c_fc_weight_shape = IxDyn(&[n_embd as usize, n_inner as usize]);
-        let c_fc_bias_shape = IxDyn(&[n_inner as usize]);
-        let c_proj_weight_shape = IxDyn(&[n_inner as usize, n_embd as usize]);
-        let c_proj_bias_shape = IxDyn(&[n_embd as usize]);
-
-        Ok(Self {
-            _c_fc_weight: ArrayD::zeros(c_fc_weight_shape),
-            _c_fc_bias: ArrayD::zeros(c_fc_bias_shape),
-            _c_proj_weight: ArrayD::zeros(c_proj_weight_shape),
-            _c_proj_bias: ArrayD::zeros(c_proj_bias_shape),
-        })
-    }
-
-    pub fn forward(&self, hidden_states: &ArrayD<f32>) -> Result<ArrayD<f32>, Box<dyn std::error::Error>> {
-        // Placeholder for MLP forward pass.
-        // For testing, this should return a tensor of the same shape as the input,
-        // as an MLP block (n_embd -> n_inner -> n_embd) preserves the last dimension's size.
-        // println!("MLP forward called with hidden_states shape: {:?}", hidden_states.shape());
-
-        if hidden_states.ndim() < 1 { // Should be at least 1D (e.g. [n_embd])
-             return Err(format!("Expected at least 1D input, got {}D", hidden_states.ndim()).into());
-        }
-        // let n_embd_input = hidden_states.shape().last().unwrap_or(&0);
-        // let n_embd_config = self._c_proj_bias.shape()[0]; // Infer n_embd from bias shape
-        // if *n_embd_input != n_embd_config {
-        //      return Err(format!("Input embedding dimension ({}) does not match model n_embd ({})", n_embd_input, n_embd_config).into());
-        // }
-        
-        // For now, to allow testing other parts, return a clone.
-        // This is NOT a correct MLP implementation.
-        Ok(hidden_states.clone())
-        // todo!("Implement MLP forward pass with linear layers and activation");
- main
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
- feat/gpt2-core-logic-and-weights
-    use ndarray::{arr0, arr1, arr3, ArrayD, IxDyn}; // IxDyn for ArrayD::from_shape_vec
+    use ndarray::{arr0, arr1, ArrayD, IxDyn, s}; // Added arr1, s for slice
     use approx::assert_abs_diff_eq;
 
     #[test]
@@ -155,28 +119,30 @@ mod tests {
     }
 
     #[test]
+    fn test_mlp_new_invalid_params() {
+        assert!(MLP::new(0, 3072).is_err());
+        assert!(MLP::new(768, 0).is_err());
+        assert!(MLP::new(-1, 3072).is_err()); // Added for negative check
+        assert!(MLP::new(768, -1).is_err()); // Added for negative check
+    }
+
+    #[test]
     fn test_gelu_fn() {
         // Test scalar 0.0
         let x0 = arr0(0.0f32).into_dyn();
         let y0 = gelu(&x0);
-        assert_abs_diff_eq!(y0.first().unwrap(), &0.0, epsilon = 1e-6);
+        assert_abs_diff_eq!(y0.iter().next().unwrap(), &0.0, epsilon = 1e-6); // Changed to iter().next().unwrap()
 
         // Test scalar 1.0
         let x1 = arr0(1.0f32).into_dyn();
         let y1 = gelu(&x1);
-        // Expected: 0.5 * 1.0 * (1.0 + tanh(sqrt(2.0/PI) * (1.0 + 0.044715)))
-        // sqrt(2.0/PI) approx 0.79788456
-        // 1.0 + 0.044715 = 1.044715
-        // arg_tanh = 0.79788456 * 1.044715 = 0.833518
-        // tanh(0.833518) approx 0.68272
-        // result = 0.5 * (1.0 + 0.68272) = 0.5 * 1.68272 = 0.84136
-        assert_abs_diff_eq!(y1.first().unwrap(), &0.84136, epsilon = 1e-5);
+        assert_abs_diff_eq!(y1.iter().next().unwrap(), &0.84136, epsilon = 1e-5); // Changed to iter().next().unwrap()
 
         // Test with a small array
         let x_arr = ArrayD::from_shape_vec(IxDyn(&[3]), vec![-1.0, 0.0, 1.0]).unwrap();
         let y_arr = gelu(&x_arr);
         let y_expected_vec = vec![
-            0.5 * -1.0 * (1.0 + ((2.0/PI).sqrt() * (-1.0 + 0.044715 * (-1.0f32).powi(3)) ).tanh()), // approx -0.15865
+            0.5 * -1.0 * (1.0 + ((2.0/PI).sqrt() * (-1.0 + 0.044715 * (-1.0f32).powi(3)) ).tanh()),
             0.0,
             0.84136,
         ];
@@ -187,22 +153,17 @@ mod tests {
     
     #[test]
     fn test_mlp_forward() -> Result<(), Box<dyn Error>> {
-        let n_embd = 4; // Small embedding size for test
+        let n_embd = 4;
         let n_inner = 2 * n_embd; // 8
         let batch_size = 2;
         let seq_len = 3;
 
         let mut mlp = MLP::new(n_embd, n_inner)?;
         
-        // Initialize weights and biases to something non-zero for a more robust test
-        // For simplicity, let's make c_fc_w and c_proj_w identity-like if possible, and biases zero.
-        // c_fc_w: [4, 8], c_proj_w: [8, 4]
-        // This is a bit complex to make identity. Let's use ones for now.
         mlp.c_fc_w = Array::ones((n_embd as usize, n_inner as usize)).into_dyn();
         mlp.c_fc_b = Array::zeros((n_inner as usize,)).into_dyn();
         mlp.c_proj_w = Array::ones((n_inner as usize, n_embd as usize)).into_dyn();
         mlp.c_proj_b = Array::zeros((n_embd as usize,)).into_dyn();
-
 
         let hidden_states_vec: Vec<f32> = (0..(batch_size * seq_len * n_embd as usize))
             .map(|x| x as f32 * 0.1)
@@ -213,87 +174,36 @@ mod tests {
 
         assert_eq!(output.shape(), &[batch_size, seq_len, n_embd as usize]);
         
-        // Optional: Check some values.
-        // For example, if input is all 0.1, then reshaped_hs.dot(c_fc_w) where c_fc_w is ones
-        // will be 0.1 * n_embd for each element in the intermediate layer (before GELU).
-        // Example: hidden_states_reshaped_view[0] = [0.0, 0.1, 0.2, 0.3] (n_embd=4)
-        // c_fc_w is all 1s, shape [4, 8].
-        // h_fc[0,j] = sum(hidden_states_reshaped_view[0,i] * 1) = 0.0+0.1+0.2+0.3 = 0.6 for all j
-        // So h_fc[0] = [0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6] (n_inner=8)
-        // Then gelu([0.6, ...]) = [gelu(0.6), ...]
-        // gelu(0.6) = 0.5 * 0.6 * (1.0 + tanh(sqrt(2/PI)*(0.6 + 0.044715 * 0.6^3)))
-        // gelu(0.6) approx 0.506
-        // h_activated[0] = [0.506, ..., 0.506]
-        // c_proj_w is all 1s, shape [8,4]
-        // output_2d[0,k] = sum(h_activated[0,j] * 1) = 0.506 * n_inner = 0.506 * 8 = 4.048
-        // So, output first element's vector should be [4.048, 4.048, 4.048, 4.048]
+        let first_input_token_vector = hidden_states.slice(s![0,0,..]);
+        let sum_first_input_emb_vector: f32 = first_input_token_vector.iter().sum();
         
-        let first_output_vector = output.slice(s![0,0,..]);
-        for val in first_output_vector.iter() {
-             // This expected value needs to be precise based on the actual first input vector
-             // hidden_states_vec[0..4] = [0.0, 0.1, 0.2, 0.3]
-             // sum = 0.6
-             // gelu_of_sum = gelu(0.6) which is approx 0.50601 (from test_gelu_fn, 0.5 * 0.6 * (1.0 + tanh(0.79788 * (0.6 + 0.044715 * 0.216))))
-             // gelu(0.6) = 0.5 * 0.6 * (1.0 + tanh(0.7978845608028654 * (0.6 + 0.044715 * 0.216)))
-             //           = 0.3 * (1.0 + tanh(0.7978845608028654 * (0.6 + 0.00965844)))
-             //           = 0.3 * (1.0 + tanh(0.7978845608028654 * 0.60965844))
-             //           = 0.3 * (1.0 + tanh(0.4864218)) = 0.3 * (1.0 + 0.45116) = 0.3 * 1.45116 = 0.435348
-             let expected_val_after_gelu = gelu(&arr0(0.6f32 * n_embd as f32 / n_embd as f32).into_dyn()).first().unwrap().clone(); // No, this is wrong.
-                                                                                                                                // Each element of h_fc is sum_of_input_elements_times_1 (if weights are 1)
-                                                                                                                                // So, h_fc[b*s_idx + s_idx, inner_idx] = sum(input_emb_vector_for_that_token)
-             let sum_first_input_emb_vector = hidden_states.slice(s![0,0,..]).sum(); // This is 0.6 for [0.0, 0.1, 0.2, 0.3]
-             let gelu_of_sum = gelu(&arr0(sum_first_input_emb_vector).into_dyn()).first().unwrap().clone();
-             let final_expected_val = gelu_of_sum * n_inner as f32; // Each element of output_2d will be this
+        let gelu_of_sum = gelu(&arr0(sum_first_input_emb_vector).into_dyn()).iter().next().unwrap().clone();
+        let final_expected_val = gelu_of_sum * n_inner as f32;
+
+        let first_output_token_vector = output.slice(s![0,0,..]);
+        for val in first_output_token_vector.iter() {
             assert_abs_diff_eq!(*val, final_expected_val, epsilon = 1e-4);
         }
-
-
         Ok(())
-=======
-    use ndarray::Array; // For arr3
-
-    #[test]
-    fn test_mlp_new_valid_params() {
-        let n_embd = 768;
-        let n_inner = 4 * n_embd; // Typical GPT-2 inner dimension
-        let mlp_result = MLP::new(n_embd, n_inner);
-        assert!(mlp_result.is_ok());
-        let mlp = mlp_result.unwrap();
-
-        assert_eq!(mlp._c_fc_weight.shape(), &[n_embd as usize, n_inner as usize]);
-        assert_eq!(mlp._c_fc_bias.shape(), &[n_inner as usize]);
-        assert_eq!(mlp._c_proj_weight.shape(), &[n_inner as usize, n_embd as usize]);
-        assert_eq!(mlp._c_proj_bias.shape(), &[n_embd as usize]);
     }
 
     #[test]
-    fn test_mlp_new_invalid_params() {
-        assert!(MLP::new(0, 3072).is_err());
-        assert!(MLP::new(768, 0).is_err());
-        assert!(MLP::new(0, 0).is_err());
-    }
-
-    #[test]
-    fn test_mlp_forward_shape() {
+    fn test_mlp_forward_shape_check() { // Renamed from main's test_mlp_forward_shape
         let n_embd = 4;
         let n_inner = 4 * n_embd;
         let mlp = MLP::new(n_embd, n_inner).unwrap();
 
         let batch_size = 1;
         let seq_len = 3;
-        // Input shape: [batch_size, seq_len, n_embd]
         let input_hidden_states = ArrayD::zeros(IxDyn(&[batch_size, seq_len, n_embd as usize]));
         
         let forward_result = mlp.forward(&input_hidden_states);
         assert!(forward_result.is_ok(), "MLP forward failed: {:?}", forward_result.err());
         let output = forward_result.unwrap();
         
-        // Placeholder forward returns clone, so shape is the same.
-        // A real MLP would also typically result in the same output shape [batch_size, seq_len, n_embd].
         assert_eq!(output.shape(), &[batch_size, seq_len, n_embd as usize], "Output shape mismatch");
-main
     }
-    
+
     // Value-based test is not feasible until the forward pass is implemented with actual logic.
     // #[test]
     // #[ignore] // Ignored because forward is not fully implemented
